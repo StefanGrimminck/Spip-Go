@@ -86,22 +86,17 @@ func shouldLogError(err error) bool {
 		return false
 	}
 
-	// Don't log common connection termination patterns
-	if err == io.EOF ||
-		err.Error() == "read: connection reset by peer" ||
-		err.Error() == "write: broken pipe" ||
-		strings.Contains(err.Error(), "tls: first record does not look like a TLS handshake") ||
-		strings.Contains(err.Error(), "tls: bad certificate") ||
-		strings.Contains(err.Error(), "tls: handshake failure") {
+	// Only log errors that are not connection-related
+	if strings.Contains(err.Error(), "tls:") ||
+		strings.Contains(err.Error(), "read:") ||
+		strings.Contains(err.Error(), "write:") ||
+		strings.Contains(err.Error(), "i/o timeout") ||
+		err == io.EOF ||
+		isConnectionClosed(err) {
 		return false
 	}
 
-	// Don't log network timeouts
-	if netErr, ok := err.(net.Error); ok && (netErr.Timeout() || netErr.Temporary()) {
-		return false
-	}
-
-	// Log any other errors
+	// Log only truly unexpected errors
 	return true
 }
 
@@ -111,26 +106,31 @@ func classifyConnectionError(err error) (severity string, isExpected bool) {
 		return "", true
 	}
 
-	// Common expected behaviors
+	// Common scanner behaviors - debug level
 	if err == io.EOF ||
 		err.Error() == "read: connection reset by peer" ||
-		err.Error() == "write: broken pipe" {
+		err.Error() == "write: broken pipe" ||
+		strings.Contains(err.Error(), "i/o timeout") {
 		return "debug", true
 	}
 
-	// TLS-specific expected behaviors
+	// Expected TLS probing behaviors - info level
 	if strings.Contains(err.Error(), "tls: first record does not look like a TLS handshake") ||
 		strings.Contains(err.Error(), "tls: bad certificate") ||
-		strings.Contains(err.Error(), "tls: handshake failure") {
+		strings.Contains(err.Error(), "tls: handshake failure") ||
+		strings.Contains(err.Error(), "tls: client offered only unsupported versions") ||
+		strings.Contains(err.Error(), "tls: no cipher suite supported") {
 		return "info", true
 	}
 
-	// Network timeouts are expected
-	if netErr, ok := err.(net.Error); ok && (netErr.Timeout() || netErr.Temporary()) {
-		return "debug", true
+	// Network timeouts and temporary errors - debug level
+	if netErr, ok := err.(net.Error); ok {
+		if netErr.Timeout() || netErr.Temporary() {
+			return "debug", true
+		}
 	}
 
-	// Anything else is potentially unexpected
+	// Anything else might be worth investigating
 	return "error", false
 }
 
@@ -164,7 +164,6 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 	// Get original destination
 	origDst, err := socket.GetOriginalDst(conn)
 	if err != nil {
-		h.logger.Error("network", fmt.Sprintf("Failed to get original destination: %v", err))
 		return
 	}
 
@@ -177,8 +176,7 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 		wrappedConn, isTLS, err := h.tlsHandler.WrapConnection(conn)
 		if err != nil {
 			if isTLS {
-				h.logger.Error("network", fmt.Sprintf("TLS handshake failed: %v", err))
-				return
+				return // Silently fail TLS handshake
 			}
 			// Not a TLS connection, continue with plain TCP
 			stream = tls.NewPlainStream(conn)
@@ -208,9 +206,6 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 
 			n, err := stream.Read(buffer)
 			if err != nil {
-				if shouldLogError(err) {
-					h.logger.Error("network", fmt.Sprintf("Unexpected error reading from connection: %v", err))
-				}
 				return
 			}
 
@@ -231,9 +226,6 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 
 			// Write response
 			if _, err := stream.Write(response); err != nil {
-				if shouldLogError(err) {
-					h.logger.Error("network", fmt.Sprintf("Unexpected error writing to connection: %v", err))
-				}
 				return
 			}
 
