@@ -267,8 +267,9 @@ func TestTCPConnection(t *testing.T) {
 		t.Fatalf("Failed to make TCP request: %v", err)
 	}
 
-	if !bytes.Equal(response, payload) {
-		t.Errorf("Got response %q, want %q", string(response), string(payload))
+	expectedResponse := []byte(testHost)
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("Got response %q, want %q", string(response), string(expectedResponse))
 	}
 
 	// Give a small time for output to be written
@@ -311,8 +312,8 @@ func TestTCPConnection(t *testing.T) {
 		t.Fatalf("Failed to make HTTP request: %v", err)
 	}
 
-	if len(response) == 0 {
-		t.Error("Expected non-empty HTTP response")
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("Got HTTP response %q, want %q", string(response), string(expectedResponse))
 	}
 }
 
@@ -327,8 +328,9 @@ func TestTLSConnection(t *testing.T) {
 		t.Fatalf("Failed to make TLS request: %v", err)
 	}
 
-	if !bytes.Equal(response, payload) {
-		t.Errorf("Got response %q, want %q", string(response), string(payload))
+	expectedResponse := []byte(testHost)
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("Got response %q, want %q", string(response), string(expectedResponse))
 	}
 
 	// Test HTTPS
@@ -338,8 +340,8 @@ func TestTLSConnection(t *testing.T) {
 		t.Fatalf("Failed to make HTTPS request: %v", err)
 	}
 
-	if len(response) == 0 {
-		t.Error("Expected non-empty HTTPS response")
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("Got HTTPS response %q, want %q", string(response), string(expectedResponse))
 	}
 }
 
@@ -352,6 +354,8 @@ func TestConcurrentConnections(t *testing.T) {
 	errChan := make(chan error, numConnections*2)
 	doneChan := make(chan struct{})
 
+	expectedResponse := []byte(testHost)
+
 	// Start TCP connections
 	for i := 0; i < numConnections; i++ {
 		go func(id int) {
@@ -361,8 +365,8 @@ func TestConcurrentConnections(t *testing.T) {
 				errChan <- fmt.Errorf("TCP request %d failed: %v", id, err)
 				return
 			}
-			if !bytes.Equal(response, payload) {
-				errChan <- fmt.Errorf("TCP request %d: got %q, want %q", id, string(response), string(payload))
+			if !bytes.Equal(response, expectedResponse) {
+				errChan <- fmt.Errorf("TCP request %d: got %q, want %q", id, string(response), string(expectedResponse))
 				return
 			}
 			errChan <- nil
@@ -378,8 +382,8 @@ func TestConcurrentConnections(t *testing.T) {
 				errChan <- fmt.Errorf("TLS request %d failed: %v", id, err)
 				return
 			}
-			if !bytes.Equal(response, payload) {
-				errChan <- fmt.Errorf("TLS request %d: got %q, want %q", id, string(response), string(payload))
+			if !bytes.Equal(response, expectedResponse) {
+				errChan <- fmt.Errorf("TLS request %d: got %q, want %q", id, string(response), string(expectedResponse))
 				return
 			}
 			errChan <- nil
@@ -408,6 +412,8 @@ func TestLongRunningConnection(t *testing.T) {
 	env := setupTestEnv(t, true)
 	defer env.cleanup()
 
+	expectedResponse := []byte(testHost)
+
 	// Create a long-running connection
 	conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", testHost, testPort), &tls.Config{
 		InsecureSkipVerify: true,
@@ -424,13 +430,13 @@ func TestLongRunningConnection(t *testing.T) {
 			t.Fatalf("Failed to write message %d: %v", i, err)
 		}
 
-		response := make([]byte, len(payload))
+		response := make([]byte, len(expectedResponse))
 		if _, err := io.ReadFull(conn, response); err != nil {
 			t.Fatalf("Failed to read response for message %d: %v", i, err)
 		}
 
-		if !bytes.Equal(response, payload) {
-			t.Errorf("Message %d: got %q, want %q", i, string(response), string(payload))
+		if !bytes.Equal(response, expectedResponse) {
+			t.Errorf("Message %d: got %q, want %q", i, string(response), string(expectedResponse))
 		}
 
 		time.Sleep(100 * time.Millisecond)
@@ -460,8 +466,9 @@ func TestConnectionReset(t *testing.T) {
 		t.Fatalf("Failed to make request after reset: %v", err)
 	}
 
-	if !bytes.Equal(response, payload) {
-		t.Errorf("After reset: got %q, want %q", string(response), string(payload))
+	expectedResponse := []byte(testHost)
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("After reset: got %q, want %q", string(response), string(expectedResponse))
 	}
 }
 
@@ -475,8 +482,9 @@ func TestProcessRestart(t *testing.T) {
 		t.Fatalf("Failed to make request before restart: %v", err)
 	}
 
-	if !bytes.Equal(response, payload) {
-		t.Errorf("Before restart: got %q, want %q", string(response), string(payload))
+	expectedResponse := []byte(testHost)
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("Before restart: got %q, want %q", string(response), string(expectedResponse))
 	}
 
 	// Stop the process
@@ -498,8 +506,8 @@ func TestProcessRestart(t *testing.T) {
 		t.Fatalf("Failed to make request after restart: %v", err)
 	}
 
-	if !bytes.Equal(response, payload) {
-		t.Errorf("After restart: got %q, want %q", string(response), string(payload))
+	if !bytes.Equal(response, expectedResponse) {
+		t.Errorf("After restart: got %q, want %q", string(response), string(expectedResponse))
 	}
 
 	env.cleanup()
@@ -542,6 +550,8 @@ func TestOriginalDestinationPreservationTCP(t *testing.T) {
 	portPayloads := make(map[int]string)
 	portSessions := make(map[int]string)
 
+	expectedResponse := []byte(testHost)
+
 	// Make connections and track session IDs
 	for _, tc := range testCases {
 		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", testHost, tc.port))
@@ -554,13 +564,13 @@ func TestOriginalDestinationPreservationTCP(t *testing.T) {
 		}
 
 		// Read response
-		response := make([]byte, len(tc.payload))
+		response := make([]byte, len(expectedResponse))
 		if _, err := io.ReadFull(conn, response); err != nil {
 			t.Fatalf("Failed to read from port %d: %v", tc.port, err)
 		}
 
-		if !bytes.Equal(response, []byte(tc.payload)) {
-			t.Errorf("Port %d: response mismatch", tc.port)
+		if !bytes.Equal(response, expectedResponse) {
+			t.Errorf("Port %d: response mismatch, got %q, want %q", tc.port, string(response), string(expectedResponse))
 		}
 
 		conn.Close()
@@ -660,11 +670,12 @@ func TestOriginalDestinationPreservationTLS(t *testing.T) {
 		}
 	}
 
-	// Create synchronized maps for storing results
-	var mu sync.Mutex
+	// Track which ports we've found with correct data
 	foundPorts := make(map[int]bool)
 	portPayloads := make(map[int]string)
 	portSessions := make(map[int]string)
+
+	expectedResponse := []byte(testHost)
 
 	// Make connections and track session IDs
 	var wg sync.WaitGroup
@@ -692,20 +703,31 @@ func TestOriginalDestinationPreservationTLS(t *testing.T) {
 			}
 
 			// Read response
-			response := make([]byte, len(tc.payload))
+			response := make([]byte, len(expectedResponse))
 			if _, err := io.ReadFull(conn, response); err != nil {
 				t.Errorf("Failed to read from port %d: %v", tc.port, err)
 				return
 			}
 
-			if !bytes.Equal(response, []byte(tc.payload)) {
-				t.Errorf("Port %d: response mismatch", tc.port)
+			if !bytes.Equal(response, expectedResponse) {
+				t.Errorf("Port %d: response mismatch, got %q, want %q", tc.port, string(response), string(expectedResponse))
 			}
 		}(tc)
 	}
 
-	// Wait for all connections to complete
-	wg.Wait()
+	// Wait for all connections with a timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All connections completed successfully
+	case <-time.After(10 * time.Second):
+		t.Fatal("Timeout waiting for connections")
+	}
 
 	// Wait for output to be written
 	time.Sleep(time.Second)
@@ -747,11 +769,9 @@ func TestOriginalDestinationPreservationTLS(t *testing.T) {
 					if entry.SessionID == "" {
 						t.Errorf("Port %d: missing session ID", tc.port)
 					}
-					mu.Lock()
 					foundPorts[tc.port] = true
 					portPayloads[tc.port] = entry.Payload
 					portSessions[tc.port] = entry.SessionID
-					mu.Unlock()
 				}
 			}
 		}
@@ -759,19 +779,13 @@ func TestOriginalDestinationPreservationTLS(t *testing.T) {
 
 	// Verify we found all ports with correct data
 	for _, tc := range testCases {
-		mu.Lock()
-		found := foundPorts[tc.port]
-		payload := portPayloads[tc.port]
-		session := portSessions[tc.port]
-		mu.Unlock()
-
-		if !found {
+		if !foundPorts[tc.port] {
 			t.Errorf("Did not find connection to original port %d in output", tc.port)
 		}
-		if payload != tc.payload {
+		if payload := portPayloads[tc.port]; payload != tc.payload {
 			t.Errorf("Port %d: final payload mismatch: got %q, want %q", tc.port, payload, tc.payload)
 		}
-		if session == "" {
+		if session := portSessions[tc.port]; session == "" {
 			t.Errorf("Port %d: missing session ID in final verification", tc.port)
 		}
 	}
@@ -799,6 +813,8 @@ func TestHighLoadConcurrent(t *testing.T) {
 	connCount := 0
 	start := time.Now()
 
+	expectedResponse := []byte(testHost)
+
 	for connCount < totalConns {
 		<-ticker.C
 
@@ -810,8 +826,8 @@ func TestHighLoadConcurrent(t *testing.T) {
 				errChan <- fmt.Errorf("TCP probe %d failed: %v", id, err)
 				return
 			}
-			if !bytes.Equal(response, payload) {
-				errChan <- fmt.Errorf("TCP probe %d: response mismatch", id)
+			if !bytes.Equal(response, expectedResponse) {
+				errChan <- fmt.Errorf("TCP probe %d: response mismatch, got %q, want %q", id, string(response), string(expectedResponse))
 			}
 			errChan <- nil
 		}(connCount)
@@ -824,8 +840,8 @@ func TestHighLoadConcurrent(t *testing.T) {
 				errChan <- fmt.Errorf("TLS probe %d failed: %v", id, err)
 				return
 			}
-			if !bytes.Equal(response, payload) {
-				errChan <- fmt.Errorf("TLS probe %d: response mismatch", id)
+			if !bytes.Equal(response, expectedResponse) {
+				errChan <- fmt.Errorf("TLS probe %d: response mismatch, got %q, want %q", id, string(response), string(expectedResponse))
 			}
 			errChan <- nil
 		}(connCount)
