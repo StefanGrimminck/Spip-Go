@@ -56,9 +56,8 @@ func isHTTPRequest(data []byte) bool {
 }
 
 // handleHTTPRequest handles an HTTP request and returns an HTTP response
-func handleHTTPRequest(data []byte) []byte {
-	content := "Hello from Spip!"
-	return []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(content), content))
+func handleHTTPRequest(data []byte, sourceIP string) []byte {
+	return []byte(fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(sourceIP), sourceIP))
 }
 
 // isConnectionClosed checks if an error indicates a closed connection
@@ -216,9 +215,10 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 			// Check if this is an HTTP request
 			var response []byte
 			if isHTTPRequest(buffer[:n]) {
-				response = handleHTTPRequest(buffer[:n])
+				response = handleHTTPRequest(buffer[:n], remoteAddr.IP.String())
 			} else {
-				response = buffer[:n] // Echo back for non-HTTP requests
+				// For non-HTTP requests, return just the IP
+				response = []byte(remoteAddr.IP.String())
 			}
 
 			// Set write deadline
