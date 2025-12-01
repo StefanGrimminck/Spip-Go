@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -222,7 +223,27 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 						reqObj["headers"] = headers
 					}
 					httpObj["request"] = reqObj
-					ecs["url"] = map[string]interface{}{"path": path}
+
+					// Build url.* from path and Host header when available
+					urlObj := map[string]interface{}{"path": path}
+					if hostHeader, ok := headers["host"]; ok && hostHeader != "" {
+						// Split host:port if present
+						host := hostHeader
+						var portVal int
+						if colon := strings.LastIndex(hostHeader, ":"); colon != -1 {
+							host = hostHeader[:colon]
+							if p, err := strconv.Atoi(hostHeader[colon+1:]); err == nil {
+								portVal = p
+							}
+						}
+						if host != "" {
+							urlObj["domain"] = host
+						}
+						if portVal != 0 {
+							urlObj["port"] = portVal
+						}
+					}
+					ecs["url"] = urlObj
 
 					// Extract User-Agent if present (prefer parsed header)
 					if ua, ok := headers["user-agent"]; ok && ua != "" {
