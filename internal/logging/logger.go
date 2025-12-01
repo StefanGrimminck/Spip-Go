@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -111,59 +112,80 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 	}
 	ecs["network"] = network
 
-	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request
+	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request.
+	// Use a stricter check: require a valid request-line and either a header
+	// terminator ("\r\n\r\n") or an explicit Host header. This reduces
+	// false positives when processing arbitrary probes.
 	payload := data.Payload
 	if payload != "" {
-		// Prepare http and url containers
+		// Prepare http container
 		httpObj := map[string]interface{}{}
-		// Split headers by CRLF
+
+		// Split into lines by CRLF
 		lines := strings.Split(payload, "\r\n")
+
+		// Regex for a basic HTTP/1.x request-line: METHOD SP PATH SP HTTP/1.[01]
+		reqLineRe := regexp.MustCompile(`^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+HTTP/1\.[01]$`)
+
 		if len(lines) > 0 {
-			// First line: METHOD PATH HTTP/1.1
-			parts := strings.SplitN(lines[0], " ", 3)
-			if len(parts) >= 2 {
-				method := parts[0]
-				path := parts[1]
-				// Only include HTTP fields if method looks like HTTP verb
-				verbs := map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true, "HEAD": true, "OPTIONS": true, "PATCH": true}
-				if verbs[method] {
+			reqLine := lines[0]
+			if m := reqLineRe.FindStringSubmatch(reqLine); m != nil {
+				method := m[1]
+				path := m[2]
+
+				// Check for header terminator or Host header presence
+				hasTerminator := strings.Contains(payload, "\r\n\r\n")
+				hasHost := false
+				for _, ln := range lines[1:] {
+					if ln == "" { // end of headers
+						break
+					}
+					if strings.HasPrefix(strings.ToLower(ln), "host:") {
+						hasHost = true
+						break
+					}
+				}
+
+				if hasTerminator || hasHost {
+					// Treat as HTTP
 					httpObj["request"] = map[string]interface{}{"method": method}
 					ecs["url"] = map[string]interface{}{"path": path}
-				}
-			}
 
-			// Find User-Agent header
-			for _, ln := range lines[1:] {
-				if ln == "" { // headers end
-					break
-				}
-				if strings.HasPrefix(strings.ToLower(ln), "user-agent:") {
-					ua := strings.TrimSpace(ln[len("user-agent:"):])
-					ecs["user_agent"] = map[string]interface{}{"original": ua}
-					break
-				}
-			}
-		}
+					// Extract User-Agent if present
+					for _, ln := range lines[1:] {
+						if ln == "" {
+							break
+						}
+						if strings.HasPrefix(strings.ToLower(ln), "user-agent:") {
+							ua := strings.TrimSpace(ln[len("user-agent:"):])
+							ecs["user_agent"] = map[string]interface{}{"original": ua}
+							break
+						}
+					}
 
-		// place raw payload into ECS http.request.body when appropriate
-		if len(httpObj) > 0 {
-			// ensure request map exists
-			if _, ok := httpObj["request"]; !ok {
-				httpObj["request"] = map[string]interface{}{}
+					// Put raw payload into http.request.body for HTTP flows
+					if _, ok := httpObj["request"]; !ok {
+						httpObj["request"] = map[string]interface{}{}
+					}
+					if req, ok := httpObj["request"].(map[string]interface{}); ok {
+						req["body"] = payload
+					}
+					ecs["http"] = httpObj
+				} else {
+					// Looks like a request-line but missing headers/terminator => don't
+					// classify as HTTP. Preserve payload in event.summary.
+					ecs["event"] = map[string]interface{}{
+						"id":      data.SessionID,
+						"summary": data.Payload,
+					}
+				}
+			} else {
+				// Not an HTTP request-line: preserve payload in event.summary
+				ecs["event"] = map[string]interface{}{
+					"id":      data.SessionID,
+					"summary": data.Payload,
+				}
 			}
-			if req, ok := httpObj["request"].(map[string]interface{}); ok {
-				req["body"] = payload
-			}
-			ecs["http"] = httpObj
-		} else {
-			// non-HTTP payloads: keep top-level message in event.summary for ECS consumers
-			// and still include body under http.request.body for downstream tools that expect it
-			ecs["event"] = map[string]interface{}{
-				"id":      data.SessionID,
-				"summary": data.Payload,
-			}
-			// create http.request.body to keep payload accessible
-			ecs["http"] = map[string]interface{}{"request": map[string]interface{}{"body": payload}}
 		}
 	}
 
