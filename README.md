@@ -36,6 +36,12 @@ Optional configuration keys:
 - `read_timeout_seconds` / `write_timeout_seconds` — connection timeouts
 - `rate_limit_per_second` / `rate_limit_burst` — connection rate-limiting
 
+If these runtime tuning fields are omitted or set to `0`, Spip applies the following defaults:
+- `read_timeout_seconds`: 30
+- `write_timeout_seconds`: 10
+- `rate_limit_per_second`: 20
+- `rate_limit_burst`: 50000
+
 4) Redirect incoming TCP to the agent (example, excluding SSH)
 ```bash
 sudo iptables -t nat -F
@@ -63,7 +69,11 @@ Example (ECS-shaped) record produced by Spip:
 ```json
 {
   "@timestamp": "2025-12-01T19:35:18.123Z",
-  "event": {"id": "bd30cdc1-95b0-49aa-b8fe-e77230b6a04f"},
+  "event": {
+    "id": "bd30cdc1-95b0-49aa-b8fe-e77230b6a04f",
+    "original_payload_hex": "426974546f7272656e742070726f746f636f6c",
+    "ingested_by": "spip"
+  },
   "observer": {"hostname": "spip-agent"},
   "host": {"name": "spip-agent"},
   "source": {"ip": "146.70.1.1", "port": 35882},
@@ -71,8 +81,7 @@ Example (ECS-shaped) record produced by Spip:
   "network": {"transport": "tcp"},
   "http": {"request": {"body": "BitTorrent protocol"}},
   "url": {"path": "/announce"},
-  "user_agent": {"original": "curl/7.68.0"},
-  "event": {"original_payload_hex": "426974546f7272656e742070726f746f636f6c"}
+  "user_agent": {"original": "curl/7.68.0"}
 }
 ```
 
@@ -95,6 +104,12 @@ go test ./...
 ```
 
 End-to-end tests require privileges to manipulate `iptables` and are runnable via the included container helper scripts (see `scripts/`).
+
+## Notes on HTTP parsing and security
+
+Spip performs best-effort HTTP request detection from the captured payload. When the payload clearly resembles an HTTP request (valid request line plus basic headers or ALPN), the agent emits `http.*`, `url.path`, and `user_agent.original` fields. When it does not, Spip falls back to storing the payload in `event.summary` and always preserves the raw payload hex in `event.original_payload_hex`.
+
+Because Spip reflects the source IP in its responses and accepts arbitrary inbound TCP traffic, it is best deployed in controlled or monitored environments (for example, honeypot-style sensors or edge collectors) rather than on untrusted endpoints.
 
 ## Initial setup helper
 Run the interactive helper from the repo root (requires root when applying iptables rules):

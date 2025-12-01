@@ -60,6 +60,8 @@ type FileLogger struct {
 	output io.Writer
 }
 
+var httpReqLineRe = regexp.MustCompile(`^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+HTTP/1\.[01]$`)
+
 // NewLogger creates a new logger instance
 func NewLogger(output io.Writer) Logger {
 	return &FileLogger{output: output}
@@ -138,12 +140,9 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 		// Split into lines by CRLF
 		lines := strings.Split(payload, "\r\n")
 
-		// Regex for a basic HTTP/1.x request-line: METHOD SP PATH SP HTTP/1.[01]
-		reqLineRe := regexp.MustCompile(`^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+HTTP/1\.[01]$`)
-
 		if len(lines) > 0 {
 			reqLine := lines[0]
-			if m := reqLineRe.FindStringSubmatch(reqLine); m != nil {
+			if m := httpReqLineRe.FindStringSubmatch(reqLine); m != nil {
 				method := m[1]
 				path := m[2]
 
