@@ -101,21 +101,21 @@ func ParseLogLine(line string) (*LogEntry, error) {
 		}
 	}
 
-	// payload fields - prefer ECS locations, fall back to legacy top-level keys
-	// 1) http.request.body
-	if httpObj, ok := m["http"].(map[string]interface{}); ok {
-		if req, ok := httpObj["request"].(map[string]interface{}); ok {
-			if body, ok := req["body"].(string); ok {
-				entry.Payload = body
-			}
+	// payload fields - prefer `event.summary` (non-HTTP payloads), then http.request.body, then legacy keys
+	// 1) event.summary (non-HTTP payloads)
+	if ev, ok := m["event"].(map[string]interface{}); ok {
+		if summary, ok := ev["summary"].(string); ok {
+			entry.Payload = summary
 		}
 	}
 
-	// 2) event.summary (non-HTTP payloads)
+	// 2) http.request.body (HTTP payloads) - only used if event.summary wasn't present
 	if entry.Payload == "" {
-		if ev, ok := m["event"].(map[string]interface{}); ok {
-			if summary, ok := ev["summary"].(string); ok {
-				entry.Payload = summary
+		if httpObj, ok := m["http"].(map[string]interface{}); ok {
+			if req, ok := httpObj["request"].(map[string]interface{}); ok {
+				if body, ok := req["body"].(string); ok {
+					entry.Payload = body
+				}
 			}
 		}
 	}

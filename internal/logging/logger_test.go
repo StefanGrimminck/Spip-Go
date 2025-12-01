@@ -153,12 +153,19 @@ func TestLogConnection(t *testing.T) {
 		t.Fatalf("missing network object in logged record")
 	}
 
-	// Payload should be available under http.request.body (ECS), fallback to top-level payload
+	// Payload should be available under event.summary (non-HTTP) or http.request.body (HTTP), fallback to top-level payload
 	var gotPayload string
-	if httpObj, ok := logged["http"].(map[string]interface{}); ok {
-		if req, ok := httpObj["request"].(map[string]interface{}); ok {
-			if body, _ := req["body"].(string); body != "" {
-				gotPayload = body
+	if ev, ok := logged["event"].(map[string]interface{}); ok {
+		if summary, _ := ev["summary"].(string); summary != "" {
+			gotPayload = summary
+		}
+	}
+	if gotPayload == "" {
+		if httpObj, ok := logged["http"].(map[string]interface{}); ok {
+			if req, ok := httpObj["request"].(map[string]interface{}); ok {
+				if body, _ := req["body"].(string); body != "" {
+					gotPayload = body
+				}
 			}
 		}
 	}
@@ -168,7 +175,7 @@ func TestLogConnection(t *testing.T) {
 		}
 	}
 	if gotPayload != connData.Payload {
-		t.Errorf("payload/http.request.body = %v, want %v", gotPayload, connData.Payload)
+		t.Errorf("payload = %v, want %v", gotPayload, connData.Payload)
 	}
 
 	// Payload hex should be under event.original_payload_hex (ECS) or fallback to payload_hex
