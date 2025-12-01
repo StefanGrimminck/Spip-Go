@@ -9,6 +9,8 @@ import (
 
 // Config represents the application configuration
 type Config struct {
+	// Name identifies this agent instance (used in logs to distinguish hosts)
+	Name    string `toml:"name"`
 	IP       string `toml:"ip"`
 	Port     uint16 `toml:"port"`
 	CertPath string `toml:"cert_path,omitempty"`
@@ -43,6 +45,9 @@ func (c *Config) IsTLSEnabled() bool {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
+	if c.Name == "" {
+		return fmt.Errorf("name is required in configuration")
+	}
 	if c.IP == "" {
 		return fmt.Errorf("IP address is required")
 	}

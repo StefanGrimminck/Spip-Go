@@ -36,6 +36,13 @@ detect_ssh_port() {
     echo "${port:-22}"
 }
 
+detect_default_name() {
+    # Suggest a short hostname as the agent name
+    local hn
+    hn=$(hostname -s 2>/dev/null || true)
+    echo "${hn:-spip-agent}"
+}
+
 prompt() {
     local prompt_msg=$1 default=$2
     if [ -n "$default" ]; then
@@ -63,6 +70,7 @@ write_config() {
 # Configuration for spip-agent
 # Edit this file with values appropriate for your environment.
 
+name = "${CFG_NAME}"
 ip = "${CFG_IP}"
 port = ${CFG_PORT}
 EOF
@@ -157,6 +165,9 @@ main() {
     echo "Suggested listen IPs: 0.0.0.0 (bind all), detected host IP: $DEFAULT_IP"
     # Recommend binding to all interfaces by default so redirects work as expected
     CFG_IP=$(prompt "Enter the IP address the agent should listen on" "0.0.0.0")
+
+    DEFAULT_NAME=$(detect_default_name)
+    CFG_NAME=$(prompt "Enter a name to identify this agent (used in logs)" "$DEFAULT_NAME")
 
     while true; do
         CFG_PORT=$(prompt "Enter the port the agent should listen on" "8080")

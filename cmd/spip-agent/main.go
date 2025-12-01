@@ -83,7 +83,7 @@ func main() {
 	}
 
 	// Create network handler
-	handler := network.NewHandler(logger, tlsHandler, ratePerSec, burst, readTimeout, writeTimeout)
+	handler := network.NewHandler(logger, tlsHandler, ratePerSec, burst, readTimeout, writeTimeout, cfg.Name)
 
 	// Create TCP listener
 	addr := fmt.Sprintf("%s:%d", cfg.IP, cfg.Port)
