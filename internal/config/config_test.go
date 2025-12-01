@@ -92,7 +92,7 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "valid config",
 			config: Config{
-                Name: "test-agent",
+				Name: "test-agent",
 				IP:   "127.0.0.1",
 				Port: 12345,
 			},
