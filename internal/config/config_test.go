@@ -16,10 +16,10 @@ func TestLoadConfig(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		name        string
-		content     string
-		wantErr     bool
-		validateIP  string
+		name         string
+		content      string
+		wantErr      bool
+		validateIP   string
 		validatePort uint16
 	}{
 		{
@@ -30,8 +30,8 @@ func TestLoadConfig(t *testing.T) {
 				cert_path = "cert.pem"
 				key_path = "key.pem"
 			`,
-			wantErr:     false,
-			validateIP:  "127.0.0.1",
+			wantErr:      false,
+			validateIP:   "127.0.0.1",
 			validatePort: 12345,
 		},
 		{
@@ -40,8 +40,8 @@ func TestLoadConfig(t *testing.T) {
 				ip = "0.0.0.0"
 				port = 8080
 			`,
-			wantErr:     false,
-			validateIP:  "0.0.0.0",
+			wantErr:      false,
+			validateIP:   "0.0.0.0",
 			validatePort: 8080,
 		},
 		{
@@ -165,4 +165,4 @@ func TestIsTLSEnabled(t *testing.T) {
 			}
 		})
 	}
-} 
+}
