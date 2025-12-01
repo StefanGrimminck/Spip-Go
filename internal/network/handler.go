@@ -2,6 +2,7 @@ package network
 
 import (
 	"bytes"
+	cryptotls "crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -202,6 +203,8 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
 
 	var stream *tls.Stream
+	var tlsALPN string
+	var tlsServerName string
 	if h.tlsHandler != nil {
 		wrappedConn, isTLS, err := h.tlsHandler.WrapConnection(conn)
 		if err != nil {
@@ -212,6 +215,12 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 			stream = tls.NewPlainStream(conn)
 		} else {
 			if isTLS {
+				// If the wrapped connection is a crypto/tls.Conn we can extract ALPN/SNI
+				if tc, ok := wrappedConn.(*cryptotls.Conn); ok {
+					cs := tc.ConnectionState()
+					tlsALPN = cs.NegotiatedProtocol
+					tlsServerName = cs.ServerName
+				}
 				stream = tls.NewTLSStream(wrappedConn)
 			} else {
 				stream = tls.NewPlainStream(wrappedConn)
@@ -266,6 +275,8 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 				DestinationPort: origDst.Port,
 				SessionID:       sessionID,
 				IsTLS:           stream.IsTLS(),
+				TLSALPN:         tlsALPN,
+				TLSServerName:   tlsServerName,
 			}
 
 			if err := h.logger.LogConnection(connData); err != nil {
