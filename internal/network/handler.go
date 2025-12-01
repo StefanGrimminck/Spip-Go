@@ -3,11 +3,13 @@ package network
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"spip/internal/logging"
@@ -20,27 +22,62 @@ import (
 
 // Handler handles network connections
 type Handler struct {
-	logger      logging.Logger
-	tlsHandler  *tls.TLSHandler
-	limiter     *rate.Limiter
-	connections sync.Map
-	// Add configuration for timeouts
+	logger       logging.Logger
+	tlsHandler   *tls.TLSHandler
+	limiter      *rate.Limiter
+	connections  sync.Map
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 }
 
 // NewHandler creates a new network handler
-func NewHandler(logger logging.Logger, tlsHandler *tls.TLSHandler) *Handler {
-	// Allow bursts of up to 50000 connections, with 20 tokens per second
-	// This allows for handling large spikes while preventing resource exhaustion
-	// 20 tokens/sec = 1.73 million requests per day (well above 1M target)
-	// Large burst size (50000) to handle probe spikes
+func NewHandler(logger logging.Logger, tlsHandler *tls.TLSHandler, ratePerSec float64, burst int, readTimeout, writeTimeout time.Duration) *Handler {
+	if ratePerSec <= 0 {
+		ratePerSec = 20
+	}
+	if burst <= 0 {
+		burst = 50000
+	}
+	if readTimeout <= 0 {
+		readTimeout = 30 * time.Second
+	}
+	if writeTimeout <= 0 {
+		writeTimeout = 10 * time.Second
+	}
+
 	return &Handler{
 		logger:       logger,
 		tlsHandler:   tlsHandler,
-		limiter:      rate.NewLimiter(20, 50000),
-		readTimeout:  30 * time.Second, // Increased from 10s
-		writeTimeout: 10 * time.Second, // New write timeout
+		limiter:      rate.NewLimiter(rate.Limit(ratePerSec), burst),
+		readTimeout:  readTimeout,
+		writeTimeout: writeTimeout,
+	}
+}
+
+// Shutdown attempts a graceful shutdown, waiting up to timeout for active connections to finish.
+// If connections remain after timeout they are force-closed.
+func (h *Handler) Shutdown(timeout time.Duration) error {
+	start := time.Now()
+	for {
+		var active int
+		h.connections.Range(func(_, v interface{}) bool {
+			active++
+			return true
+		})
+		if active == 0 {
+			return nil
+		}
+		if time.Since(start) > timeout {
+			// Force close remaining connections
+			h.connections.Range(func(_, v interface{}) bool {
+				if c, ok := v.(*net.TCPConn); ok {
+					c.Close()
+				}
+				return true
+			})
+			return fmt.Errorf("shutdown timed out; %d connections force-closed", active)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -72,8 +109,11 @@ func isConnectionClosed(err error) bool {
 		return netErr.Timeout() || netErr.Temporary()
 	}
 	// Common scanner behavior: connection reset or broken pipe
-	if err.Error() == "read: connection reset by peer" ||
-		err.Error() == "write: broken pipe" {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// Fallback string checks for platforms or wrappers that expose textual errors
+	if strings.Contains(err.Error(), "connection reset by peer") || strings.Contains(err.Error(), "broken pipe") {
 		return true
 	}
 	return false
@@ -106,10 +146,7 @@ func classifyConnectionError(err error) (severity string, isExpected bool) {
 	}
 
 	// Common scanner behaviors - debug level
-	if err == io.EOF ||
-		err.Error() == "read: connection reset by peer" ||
-		err.Error() == "write: broken pipe" ||
-		strings.Contains(err.Error(), "i/o timeout") {
+	if err == io.EOF || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || strings.Contains(err.Error(), "i/o timeout") {
 		return "debug", true
 	}
 
@@ -135,43 +172,35 @@ func classifyConnectionError(err error) (severity string, isExpected bool) {
 
 // HandleConnection handles an incoming TCP connection
 func (h *Handler) HandleConnection(conn *net.TCPConn) {
-	// Set TCP keep-alive to detect dead connections
 	conn.SetKeepAlive(true)
 	conn.SetKeepAlivePeriod(60 * time.Second)
 
-	// Apply rate limiting
 	if !h.limiter.Allow() {
 		h.logger.Error("network", "Connection rejected due to rate limiting")
 		conn.Close()
 		return
 	}
 
-	// Store connection in the active connections map
 	connID := uuid.New().String()
 	h.connections.Store(connID, conn)
 
-	// Create a channel to signal connection completion
 	done := make(chan struct{})
 
-	// Handle connection cleanup in a deferred function
 	defer func() {
 		close(done)
 		h.connections.Delete(connID)
 		conn.Close()
 	}()
 
-	// Get original destination
 	origDst, err := socket.GetOriginalDst(conn)
 	if err != nil {
 		return
 	}
 
-	// Get connection info
 	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
 
 	var stream *tls.Stream
 	if h.tlsHandler != nil {
-		// Try to detect and handle TLS
 		wrappedConn, isTLS, err := h.tlsHandler.WrapConnection(conn)
 		if err != nil {
 			if isTLS {
@@ -180,7 +209,6 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 			// Not a TLS connection, continue with plain TCP
 			stream = tls.NewPlainStream(conn)
 		} else {
-			// Successfully wrapped as TLS or plain TCP
 			if isTLS {
 				stream = tls.NewTLSStream(wrappedConn)
 			} else {
@@ -200,7 +228,6 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 		case <-done:
 			return
 		default:
-			// Set read deadline
 			conn.SetReadDeadline(time.Now().Add(h.readTimeout))
 
 			n, err := stream.Read(buffer)
@@ -209,10 +236,9 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 			}
 
 			if n == 0 {
-				return // Connection closed
+				return
 			}
 
-			// Check if this is an HTTP request
 			var response []byte
 			if isHTTPRequest(buffer[:n]) {
 				response = handleHTTPRequest(buffer[:n], remoteAddr.IP.String())
@@ -221,15 +247,12 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 				response = []byte(remoteAddr.IP.String())
 			}
 
-			// Set write deadline
 			conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
 
-			// Write response
 			if _, err := stream.Write(response); err != nil {
 				return
 			}
 
-			// Log connection data
 			connData := &logging.ConnectionData{
 				Timestamp:       time.Now().Unix(),
 				Payload:         string(buffer[:n]),

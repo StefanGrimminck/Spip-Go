@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"spip/internal/config"
 	"spip/internal/logging"
@@ -61,8 +64,26 @@ func main() {
 		logger.Info("main", "Running in plain TCP mode")
 	}
 
+	// Determine runtime tuning with sensible defaults
+	ratePerSec := float64(cfg.RateLimitPerSecond)
+	if ratePerSec == 0 {
+		ratePerSec = 20
+	}
+	burst := cfg.RateLimitBurst
+	if burst == 0 {
+		burst = 50000
+	}
+	readTimeout := time.Duration(cfg.ReadTimeoutSeconds) * time.Second
+	if readTimeout == 0 {
+		readTimeout = 30 * time.Second
+	}
+	writeTimeout := time.Duration(cfg.WriteTimeoutSeconds) * time.Second
+	if writeTimeout == 0 {
+		writeTimeout = 10 * time.Second
+	}
+
 	// Create network handler
-	handler := network.NewHandler(logger, tlsHandler)
+	handler := network.NewHandler(logger, tlsHandler, ratePerSec, burst, readTimeout, writeTimeout)
 
 	// Create TCP listener
 	addr := fmt.Sprintf("%s:%d", cfg.IP, cfg.Port)
@@ -75,16 +96,33 @@ func main() {
 
 	logger.Info("main", fmt.Sprintf("Listening on %s", addr))
 
-	// Accept connections
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			logger.Error("main", fmt.Sprintf("Failed to accept connection: %v", err))
-			continue
-		}
+	// Accept connections and handle graceful shutdown on signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-		// Handle connection in a goroutine
-		tcpConn := conn.(*net.TCPConn)
-		go handler.HandleConnection(tcpConn)
+	acceptErrCh := make(chan error, 1)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				// If listener was closed as part of shutdown, exit goroutine
+				acceptErrCh <- err
+				return
+			}
+			tcpConn := conn.(*net.TCPConn)
+			go handler.HandleConnection(tcpConn)
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-stop
+	logger.Info("main", "Shutdown signal received, closing listener")
+	listener.Close()
+
+	// Give active connections up to 15s to finish, then force close
+	if err := handler.Shutdown(15 * time.Second); err != nil {
+		logger.Warn("main", fmt.Sprintf("Graceful shutdown completed with error: %v", err))
+	} else {
+		logger.Info("main", "Graceful shutdown completed")
 	}
 }

@@ -92,4 +92,8 @@ The project includes tests for:
 - Original destination preservation
 - High load testing
 
-Note: Running e2e tests requires root privileges for iptables manipulation. 
+Note: Running e2e tests requires root privileges for iptables manipulation.
+
+## Developer
+
+Use the provided `Makefile` for common developer tasks (for example `make fmt`, `make test`, `make e2e`). The Makefile is a local convenience only; CI runs tests directly in the workflow on clean runners.

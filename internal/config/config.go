@@ -14,6 +14,11 @@ type Config struct {
 	CertPath string `toml:"cert_path,omitempty"`
 	KeyPath  string `toml:"key_path,omitempty"`
 	LogFile  string `toml:"log_file,omitempty"`
+	// Runtime tuning
+	ReadTimeoutSeconds  int `toml:"read_timeout_seconds,omitempty"`
+	WriteTimeoutSeconds int `toml:"write_timeout_seconds,omitempty"`
+	RateLimitPerSecond  int `toml:"rate_limit_per_second,omitempty"`
+	RateLimitBurst      int `toml:"rate_limit_burst,omitempty"`
 }
 
 // LoadConfig reads and parses the TOML configuration file
