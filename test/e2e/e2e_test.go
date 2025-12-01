@@ -179,15 +179,17 @@ func createTestConfig(t *testing.T, useTLS bool, certPath, keyPath string) strin
 
 	if useTLS {
 		configContent = fmt.Sprintf(`
-ip = "%s"
-port = %d
+		name = "e2e-agent"
+		ip = "%s"
+		port = %d
 cert_path = "%s"
 key_path = "%s"
 `, testHost, testPort, certPath, keyPath)
 	} else {
 		configContent = fmt.Sprintf(`
-ip = "%s"
-port = %d
+		name = "e2e-agent"
+		ip = "%s"
+		port = %d
 `, testHost, testPort)
 	}
 

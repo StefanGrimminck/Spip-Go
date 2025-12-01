@@ -10,7 +10,7 @@ import (
 // Config represents the application configuration
 type Config struct {
 	// Name identifies this agent instance (used in logs to distinguish hosts)
-	Name    string `toml:"name"`
+	Name     string `toml:"name"`
 	IP       string `toml:"ip"`
 	Port     uint16 `toml:"port"`
 	CertPath string `toml:"cert_path,omitempty"`
