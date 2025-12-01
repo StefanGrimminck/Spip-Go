@@ -153,12 +153,45 @@ func TestLogConnection(t *testing.T) {
 		t.Fatalf("missing network object in logged record")
 	}
 
-	// Payload and payload_hex preserved
-	if p, _ := logged["payload"].(string); p != connData.Payload {
-		t.Errorf("payload = %v, want %v", p, connData.Payload)
+	// Payload should be available under http.request.body (ECS), fallback to top-level payload
+	var gotPayload string
+	if httpObj, ok := logged["http"].(map[string]interface{}); ok {
+		if req, ok := httpObj["request"].(map[string]interface{}); ok {
+			if body, _ := req["body"].(string); body != "" {
+				gotPayload = body
+			}
+		}
 	}
-	if ph, _ := logged["payload_hex"].(string); ph != connData.PayloadHex {
-		t.Errorf("payload_hex = %v, want %v", ph, connData.PayloadHex)
+	if gotPayload == "" {
+		if p, _ := logged["payload"].(string); p != "" {
+			gotPayload = p
+		}
+	}
+	if gotPayload != connData.Payload {
+		t.Errorf("payload/http.request.body = %v, want %v", gotPayload, connData.Payload)
+	}
+
+	// Payload hex should be under event.original_payload_hex (ECS) or fallback to payload_hex
+	var gotPayloadHex string
+	if ev, ok := logged["event"].(map[string]interface{}); ok {
+		if oph, _ := ev["original_payload_hex"].(string); oph != "" {
+			gotPayloadHex = oph
+		}
+	}
+	if gotPayloadHex == "" {
+		if ph, _ := logged["payload_hex"].(string); ph != "" {
+			gotPayloadHex = ph
+		}
+	}
+	if gotPayloadHex != connData.PayloadHex {
+		t.Errorf("payload_hex/event.original_payload_hex = %v, want %v", gotPayloadHex, connData.PayloadHex)
+	}
+
+	// observer / host name (if set) should match
+	if obs, ok := logged["observer"].(map[string]interface{}); ok {
+		if hn, _ := obs["hostname"].(string); hn == "" {
+			t.Errorf("observer.hostname is empty, expected value")
+		}
 	}
 }
 
