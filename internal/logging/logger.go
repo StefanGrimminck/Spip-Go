@@ -31,18 +31,24 @@ type LogMessage struct {
 // ConnectionData represents TCP connection data
 type ConnectionData struct {
 	// Name of the agent that produced this record (optional)
-	Name            string `json:"name,omitempty"`
-	Timestamp       int64  `json:"timestamp"`
-	Payload         string `json:"payload"`
-	PayloadHex      string `json:"payload_hex"`
-	SourceIP        string `json:"source_ip"`
-	SourcePort      uint16 `json:"source_port"`
-	DestinationIP   string `json:"destination_ip"`
-	DestinationPort uint16 `json:"destination_port"`
-	SessionID       string `json:"session_id"`
-	IsTLS           bool   `json:"is_tls"`
-	TLSALPN         string `json:"tls_alpn,omitempty"`
-	TLSServerName   string `json:"tls_server_name,omitempty"`
+	Name              string `json:"name,omitempty"`
+	Timestamp         int64  `json:"timestamp"`
+	Payload           string `json:"payload"`
+	PayloadHex        string `json:"payload_hex"`
+	SourceIP          string `json:"source_ip"`
+	SourcePort        uint16 `json:"source_port"`
+	DestinationIP     string `json:"destination_ip"`
+	DestinationPort   uint16 `json:"destination_port"`
+	SessionID         string `json:"session_id"`
+	IsTLS             bool   `json:"is_tls"`
+	TLSALPN           string `json:"tls_alpn,omitempty"`
+	TLSServerName     string `json:"tls_server_name,omitempty"`
+	TLSVersion        string `json:"tls_version,omitempty"`
+	TLSCipherSuite    string `json:"tls_cipher_suite,omitempty"`
+	TLSClientSubject  string `json:"tls_client_subject,omitempty"`
+	TLSClientIssuer   string `json:"tls_client_issuer,omitempty"`
+	TLSClientNotBefore int64 `json:"tls_client_not_before,omitempty"`
+	TLSClientNotAfter  int64 `json:"tls_client_not_after,omitempty"`
 }
 
 // Logger defines the interface for logging operations
@@ -116,8 +122,8 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 	}
 	ecs["network"] = network
 
-	// Include TLS metadata (ALPN / SNI) if available
-	if data.TLSALPN != "" || data.TLSServerName != "" {
+	// Include TLS metadata if available
+	if data.IsTLS {
 		tlsObj := map[string]interface{}{}
 		if data.TLSServerName != "" {
 			tlsObj["server_name"] = data.TLSServerName
@@ -125,7 +131,32 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 		if data.TLSALPN != "" {
 			tlsObj["alpn"] = data.TLSALPN
 		}
-		ecs["tls"] = tlsObj
+		if data.TLSVersion != "" {
+			tlsObj["version"] = data.TLSVersion
+		}
+		if data.TLSCipherSuite != "" {
+			tlsObj["cipher"] = data.TLSCipherSuite
+		}
+		// Optional client certificate details when mTLS is used
+		clientCert := map[string]interface{}{}
+		if data.TLSClientSubject != "" {
+			clientCert["subject"] = data.TLSClientSubject
+		}
+		if data.TLSClientIssuer != "" {
+			clientCert["issuer"] = data.TLSClientIssuer
+		}
+		if data.TLSClientNotBefore != 0 {
+			clientCert["not_before"] = time.Unix(data.TLSClientNotBefore, 0).UTC().Format(time.RFC3339Nano)
+		}
+		if data.TLSClientNotAfter != 0 {
+			clientCert["not_after"] = time.Unix(data.TLSClientNotAfter, 0).UTC().Format(time.RFC3339Nano)
+		}
+		if len(clientCert) > 0 {
+			tlsObj["client_certificate"] = clientCert
+		}
+		if len(tlsObj) > 0 {
+			ecs["tls"] = tlsObj
+		}
 	}
 
 	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request.

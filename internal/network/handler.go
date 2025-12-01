@@ -206,6 +206,8 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 	var stream *tls.Stream
 	var tlsALPN string
 	var tlsServerName string
+	var tlsVersion string
+	var tlsCipherSuite string
 	if h.tlsHandler != nil {
 		wrappedConn, isTLS, err := h.tlsHandler.WrapConnection(conn)
 		if err != nil {
@@ -216,11 +218,24 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 			stream = tls.NewPlainStream(conn)
 		} else {
 			if isTLS {
-				// If the wrapped connection is a crypto/tls.Conn we can extract ALPN/SNI
+				// If the wrapped connection is a crypto/tls.Conn we can extract ALPN/SNI and other TLS metadata
 				if tc, ok := wrappedConn.(*cryptotls.Conn); ok {
 					cs := tc.ConnectionState()
 					tlsALPN = cs.NegotiatedProtocol
 					tlsServerName = cs.ServerName
+					switch cs.Version {
+					case cryptotls.VersionTLS10:
+						tlsVersion = "TLSv1.0"
+					case cryptotls.VersionTLS11:
+						tlsVersion = "TLSv1.1"
+					case cryptotls.VersionTLS12:
+						tlsVersion = "TLSv1.2"
+					case cryptotls.VersionTLS13:
+						tlsVersion = "TLSv1.3"
+					default:
+						tlsVersion = ""
+					}
+					tlsCipherSuite = cryptotls.CipherSuiteName(cs.CipherSuite)
 				}
 				stream = tls.NewTLSStream(wrappedConn)
 			} else {
@@ -278,6 +293,8 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 				IsTLS:           stream.IsTLS(),
 				TLSALPN:         tlsALPN,
 				TLSServerName:   tlsServerName,
+				TLSVersion:      tlsVersion,
+				TLSCipherSuite:  tlsCipherSuite,
 			}
 
 			if err := h.logger.LogConnection(connData); err != nil {

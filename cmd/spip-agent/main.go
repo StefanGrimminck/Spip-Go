@@ -47,7 +47,7 @@ func main() {
 		logger = logging.NewLogger(os.Stdout)
 	}
 
-	logger.Info("main", "Starting Spip agent...")
+	fmt.Fprintln(os.Stderr, "Starting Spip agent...")
 
 	// Initialize TLS if configured
 	var tlsHandler *tls.TLSHandler
@@ -60,9 +60,9 @@ func main() {
 			logger.Error("main", fmt.Sprintf("Failed to initialize TLS: %v", err))
 			os.Exit(1)
 		}
-		logger.Info("main", "TLS enabled")
+		fmt.Fprintln(os.Stderr, "TLS enabled")
 	} else {
-		logger.Info("main", "Running in plain TCP mode")
+		fmt.Fprintln(os.Stderr, "Running in plain TCP mode")
 	}
 
 	// Determine runtime tuning with sensible defaults
@@ -95,7 +95,7 @@ func main() {
 	}
 	defer listener.Close()
 
-	logger.Info("main", fmt.Sprintf("Listening on %s", addr))
+	fmt.Fprintf(os.Stderr, "Listening on %s\n", addr)
 
 	// Accept connections and handle graceful shutdown on signals
 	stop := make(chan os.Signal, 1)
@@ -129,13 +129,13 @@ func main() {
 
 	// Wait for shutdown signal
 	<-stop
-	logger.Info("main", "Shutdown signal received, closing listener")
+	fmt.Fprintln(os.Stderr, "Shutdown signal received, closing listener")
 	listener.Close()
 
 	// Give active connections up to 15s to finish, then force close
 	if err := handler.Shutdown(15 * time.Second); err != nil {
-		logger.Warn("main", fmt.Sprintf("Graceful shutdown completed with error: %v", err))
+		fmt.Fprintf(os.Stderr, "Graceful shutdown completed with error: %v\n", err)
 	} else {
-		logger.Info("main", "Graceful shutdown completed")
+		fmt.Fprintln(os.Stderr, "Graceful shutdown completed")
 	}
 }
