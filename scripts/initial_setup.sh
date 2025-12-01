@@ -100,20 +100,23 @@ backup_iptables() {
 }
 
 apply_iptables() {
-    echo_header "Applying iptables NAT redirect rules"
-    # First, accept traffic to SSH port to avoid locking yourself out
-    iptables -t nat -A OUTPUT -p tcp --dport "$SSH_PORT" -j ACCEPT || true
+    echo_header "Applying iptables NAT redirect rules (PREROUTING)"
+    # Flush nat table first (backup already saved)
+    iptables -t nat -F || { err "Failed to flush nat table"; return 1; }
 
-    # Add redirect for matching destination IP to target port
-    iptables -t nat -A OUTPUT -p tcp -d "$CFG_IP" --dport ! "$SSH_PORT" -j REDIRECT --to-port "$CFG_PORT" || true
+    # Exclude SSH port from PREROUTING so we don't interfere with SSH
+    iptables -t nat -A PREROUTING -p tcp --dport "$SSH_PORT" -j RETURN || true
 
-    echo "Added rules: SSH port $SSH_PORT excluded, redirecting TCP to $CFG_PORT for destination $CFG_IP"
+    # Redirect all other TCP PREROUTING traffic to the configured local port
+    iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port "$CFG_PORT" || true
+
+    echo "Applied PREROUTING rules: excluded SSH port $SSH_PORT, redirected TCP to local port $CFG_PORT"
 }
 
 restore_iptables_prompt() {
     if confirm "Do you want to restore the previous iptables NAT rules from backup?"; then
         if [ -f "$IPTABLES_BACKUP" ]; then
-            iptables-restore -t < "$IPTABLES_BACKUP" || err "Failed to restore iptables NAT table"
+            iptables-restore < "$IPTABLES_BACKUP" || err "Failed to restore iptables NAT table"
             echo "Restored NAT table from $IPTABLES_BACKUP"
         else
             err "Backup file not found: $IPTABLES_BACKUP"
@@ -151,8 +154,9 @@ main() {
     DEFAULT_IP=$(detect_default_ip)
     SUGGESTED_SSH_PORT=$(detect_ssh_port)
 
-    echo "Suggested listen IP: $DEFAULT_IP"
-    CFG_IP=$(prompt "Enter the IP address the agent should listen on" "$DEFAULT_IP")
+    echo "Suggested listen IPs: 0.0.0.0 (bind all), detected host IP: $DEFAULT_IP"
+    # Recommend binding to all interfaces by default so redirects work as expected
+    CFG_IP=$(prompt "Enter the IP address the agent should listen on" "0.0.0.0")
 
     while true; do
         CFG_PORT=$(prompt "Enter the port the agent should listen on" "8080")
@@ -190,7 +194,11 @@ main() {
     fi
 
     echo_header "Iptables changes"
-    echo "This script will add NAT OUTPUT rules that redirect TCP traffic destined to $CFG_IP to local port $CFG_PORT, excluding SSH port $SSH_PORT."
+    echo "This script will modify the NAT table using PREROUTING rules to redirect incoming TCP traffic to local port $CFG_PORT, excluding SSH port $SSH_PORT."
+    echo "Proposed commands (for reference):"
+    echo "  iptables -t nat -F"
+    echo "  iptables -t nat -A PREROUTING -p tcp --dport $SSH_PORT -j RETURN"
+    echo "  iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port $CFG_PORT"
     if ! confirm "Proceed to modify iptables now?"; then
         echo "Skipping iptables changes. You can run them later with the instructions printed below.";
         write_config
@@ -211,7 +219,7 @@ main() {
     fi
     echo
     echo "If you want to undo iptables changes, run this script again and choose to restore the backup when prompted, or run:" 
-    echo "  sudo iptables-restore -t < $IPTABLES_BACKUP"
+    echo "  sudo iptables-restore < $IPTABLES_BACKUP"
 }
 
 main "$@"
