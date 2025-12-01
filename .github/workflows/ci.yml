@@ -9,13 +9,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      GOFLAGS: -buildvcs=false
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.22'
+          go-version: '1.24'
           cache: true
 
       - name: Install dependencies
@@ -35,8 +37,8 @@ jobs:
           # Allow the test user to use iptables without password
           echo "runner ALL=(ALL) NOPASSWD: /usr/sbin/iptables" | sudo tee /etc/sudoers.d/runner-iptables
           echo "runner ALL=(ALL) NOPASSWD: /sbin/iptables" | sudo tee -a /etc/sudoers.d/runner-iptables
-        
+
       - name: Run E2E tests
         run: |
           cd test/e2e
-          sudo -E go test -v ./... -race 
+          sudo -E go test -v -race -tags=e2e ./... 

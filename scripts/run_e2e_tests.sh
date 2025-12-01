@@ -28,13 +28,13 @@ fi
 echo "Cleaning up iptables rules..."
 iptables -t nat -F
 
-# Run the tests
+# Run the tests (use the `e2e` build tag)
 echo "Running end-to-end tests with race detection..."
 if [ -n "$1" ]; then
     echo "Running test: $1"
-    go test -v -race -timeout 30s ./test/e2e/... -run "$1"
+    go test -v -race -timeout 30s -tags=e2e ./test/e2e/... -run "$1"
 else
-    go test -v -race -timeout 30s ./test/e2e/...
+    go test -v -race -timeout 30s -tags=e2e ./test/e2e/...
 fi
 
 # Clean up
