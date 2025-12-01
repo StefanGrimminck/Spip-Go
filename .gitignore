@@ -13,6 +13,9 @@
 *.log
 coverage.txt
 
+# Local config file - keep local changes out of the repository
+config.toml
+
 # Dependency directories (remove these if you want to check in your vendor directory)
 vendor/
 
