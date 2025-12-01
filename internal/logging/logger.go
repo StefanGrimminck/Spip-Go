@@ -180,14 +180,33 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 				// Check for header terminator or Host header presence
 				hasTerminator := strings.Contains(payload, "\r\n\r\n")
 				hasHost := false
-				for _, ln := range lines[1:] {
+				headers := map[string]string{}
+				bodyStartIndex := -1
+
+				// Walk lines after request-line to collect headers until blank line
+				for i, ln := range lines[1:] {
 					if ln == "" { // end of headers
+						// Compute body start offset in original payload (if any)
+						// header section is everything up to and including this CRLF
+						idx := strings.Index(payload, "\r\n\r\n")
+						if idx != -1 && idx+4 <= len(payload) {
+							bodyStartIndex = idx + 4
+						}
 						break
 					}
-					if strings.HasPrefix(strings.ToLower(ln), "host:") {
+					lower := strings.ToLower(ln)
+					if strings.HasPrefix(lower, "host:") {
 						hasHost = true
-						break
 					}
+					// Parse "Key: Value" style headers
+					if idx := strings.Index(ln, ":"); idx > 0 {
+						name := strings.TrimSpace(ln[:idx])
+						value := strings.TrimSpace(ln[idx+1:])
+						if name != "" {
+							headers[strings.ToLower(name)] = value
+						}
+					}
+					_ = i // silence unused warning in case
 				}
 
 				// If ALPN indicates HTTP (e.g. http/1.1 or h2) we can be more permissive
@@ -198,28 +217,29 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 
 				if hasTerminator || hasHost || alpnIndicatesHTTP {
 					// Treat as HTTP
-					httpObj["request"] = map[string]interface{}{"method": method}
+					reqObj := map[string]interface{}{"method": method}
+					if len(headers) > 0 {
+						reqObj["headers"] = headers
+					}
+					httpObj["request"] = reqObj
 					ecs["url"] = map[string]interface{}{"path": path}
 
-					// Extract User-Agent if present
-					for _, ln := range lines[1:] {
-						if ln == "" {
-							break
-						}
-						if strings.HasPrefix(strings.ToLower(ln), "user-agent:") {
-							ua := strings.TrimSpace(ln[len("user-agent:"):])
-							ecs["user_agent"] = map[string]interface{}{"original": ua}
-							break
+					// Extract User-Agent if present (prefer parsed header)
+					if ua, ok := headers["user-agent"]; ok && ua != "" {
+						ecs["user_agent"] = map[string]interface{}{"original": ua}
+					}
+
+					// If there is a real body after headers, attach to http.request.body.content
+					if hasTerminator && bodyStartIndex != -1 && bodyStartIndex < len(payload) {
+						body := payload[bodyStartIndex:]
+						if body != "" {
+							bodyObj := map[string]interface{}{"content": body}
+							// bytes length in UTF-8
+							bodyObj["bytes"] = len([]byte(body))
+							reqObj["body"] = bodyObj
 						}
 					}
 
-					// Put raw payload into http.request.body for HTTP flows
-					if _, ok := httpObj["request"]; !ok {
-						httpObj["request"] = map[string]interface{}{}
-					}
-					if req, ok := httpObj["request"].(map[string]interface{}); ok {
-						req["body"] = payload
-					}
 					ecs["http"] = httpObj
 				} else {
 					// Looks like a request-line but missing headers/terminator => don't
