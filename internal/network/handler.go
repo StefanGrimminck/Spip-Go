@@ -28,10 +28,11 @@ type Handler struct {
 	connections  sync.Map
 	readTimeout  time.Duration
 	writeTimeout time.Duration
+	name         string
 }
 
 // NewHandler creates a new network handler
-func NewHandler(logger logging.Logger, tlsHandler *tls.TLSHandler, ratePerSec float64, burst int, readTimeout, writeTimeout time.Duration) *Handler {
+func NewHandler(logger logging.Logger, tlsHandler *tls.TLSHandler, ratePerSec float64, burst int, readTimeout, writeTimeout time.Duration, name string) *Handler {
 	if ratePerSec <= 0 {
 		ratePerSec = 20
 	}
@@ -51,6 +52,7 @@ func NewHandler(logger logging.Logger, tlsHandler *tls.TLSHandler, ratePerSec fl
 		limiter:      rate.NewLimiter(rate.Limit(ratePerSec), burst),
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
+		name:         name,
 	}
 }
 
@@ -254,6 +256,7 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 			}
 
 			connData := &logging.ConnectionData{
+				Name:            h.name,
 				Timestamp:       time.Now().Unix(),
 				Payload:         string(buffer[:n]),
 				PayloadHex:      hex.EncodeToString(buffer[:n]),
