@@ -101,8 +101,8 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 
 	// observer and host hostname from agent name, if present (ECS fields)
 	if data.Name != "" {
-		ecs["observer"] = map[string]interface{}{"hostname": data.Name} // observer.hostname
-		ecs["host"] = map[string]interface{}{"name": data.Name}         // host.name
+		ecs["observer"] = map[string]interface{}{"hostname": data.Name, "id": data.Name} // observer.hostname + observer.id
+		ecs["host"] = map[string]interface{}{"name": data.Name}                          // host.name
 	}
 
 	// network transport/protocol hints (derived from IsTLS)
@@ -198,6 +198,14 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 		} else {
 			ecs["event"] = map[string]interface{}{"id": data.SessionID, "original_payload_hex": data.PayloadHex}
 		}
+	}
+
+	// Mark ingestion source so downstream consumers know this record came from Spip
+	if ev, ok := ecs["event"].(map[string]interface{}); ok {
+		ev["ingested_by"] = "spip"
+		ecs["event"] = ev
+	} else {
+		ecs["event"] = map[string]interface{}{"id": data.SessionID, "ingested_by": "spip"}
 	}
 
 	return l.writeJSON(ecs)
