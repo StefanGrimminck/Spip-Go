@@ -197,6 +197,7 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 
 	origDst, err := socket.GetOriginalDst(conn)
 	if err != nil {
+		h.logger.Debug("network", fmt.Sprintf("failed to get original destination: %v", err))
 		return
 	}
 
