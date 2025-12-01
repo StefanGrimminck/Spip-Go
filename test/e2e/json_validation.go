@@ -6,6 +6,7 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // LogEntry represents the JSON log format output by the SPIP agent
@@ -66,9 +67,114 @@ func ValidateLogEntry(entry *LogEntry, expectedPayload string, expectedIsTLS boo
 
 // ParseLogLine parses a JSON log line into a LogEntry struct
 func ParseLogLine(line string) (*LogEntry, error) {
-	var entry LogEntry
-	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+	// Parse into a generic map and extract known fields (supports ECS-shaped output)
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
 		return nil, err
 	}
-	return &entry, nil
+
+	entry := &LogEntry{}
+
+	// @timestamp (RFC3339) -> Unix
+	if tsRaw, ok := m["@timestamp"]; ok {
+		if tsStr, ok := tsRaw.(string); ok && tsStr != "" {
+			if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
+				entry.Timestamp = t.Unix()
+			} else if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
+				entry.Timestamp = t.Unix()
+			}
+		}
+	} else if tsRaw, ok := m["timestamp"]; ok {
+		// fallback to numeric timestamp
+		switch v := tsRaw.(type) {
+		case float64:
+			entry.Timestamp = int64(v)
+		case int64:
+			entry.Timestamp = v
+		}
+	}
+
+	// event.id -> session id
+	if ev, ok := m["event"].(map[string]interface{}); ok {
+		if id, ok := ev["id"].(string); ok {
+			entry.SessionID = id
+		}
+	}
+
+	// payload fields - prefer ECS locations, fall back to legacy top-level keys
+	// 1) http.request.body
+	if httpObj, ok := m["http"].(map[string]interface{}); ok {
+		if req, ok := httpObj["request"].(map[string]interface{}); ok {
+			if body, ok := req["body"].(string); ok {
+				entry.Payload = body
+			}
+		}
+	}
+
+	// 2) event.summary (non-HTTP payloads)
+	if entry.Payload == "" {
+		if ev, ok := m["event"].(map[string]interface{}); ok {
+			if summary, ok := ev["summary"].(string); ok {
+				entry.Payload = summary
+			}
+		}
+	}
+
+	// 3) legacy top-level payload
+	if entry.Payload == "" {
+		if p, ok := m["payload"].(string); ok {
+			entry.Payload = p
+		}
+	}
+
+	// payload hex - prefer event.original_payload_hex, then fallback
+	if ev, ok := m["event"].(map[string]interface{}); ok {
+		if oph, ok := ev["original_payload_hex"].(string); ok {
+			entry.PayloadHex = oph
+		}
+	}
+	if entry.PayloadHex == "" {
+		if ph, ok := m["payload_hex"].(string); ok {
+			entry.PayloadHex = ph
+		}
+	}
+
+	// source and destination
+	if src, ok := m["source"].(map[string]interface{}); ok {
+		if sip, ok := src["ip"].(string); ok {
+			entry.SourceIP = sip
+		}
+		if sport, ok := src["port"]; ok {
+			switch v := sport.(type) {
+			case float64:
+				entry.SourcePort = int(v)
+			case int:
+				entry.SourcePort = v
+			}
+		}
+	}
+	if dst, ok := m["destination"].(map[string]interface{}); ok {
+		if dip, ok := dst["ip"].(string); ok {
+			entry.DestinationIP = dip
+		}
+		if dport, ok := dst["port"]; ok {
+			switch v := dport.(type) {
+			case float64:
+				entry.DestinationPort = int(v)
+			case int:
+				entry.DestinationPort = v
+			}
+		}
+	}
+
+	// network.protocol -> IsTLS
+	if netObj, ok := m["network"].(map[string]interface{}); ok {
+		if proto, ok := netObj["protocol"].(string); ok {
+			if proto == "tls" || proto == "https" {
+				entry.IsTLS = true
+			}
+		}
+	}
+
+	return entry, nil
 }
