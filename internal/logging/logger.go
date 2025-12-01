@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -76,7 +77,85 @@ func (l *FileLogger) Log(level LogLevel, target, message string) error {
 
 // LogConnection writes connection data in JSON format
 func (l *FileLogger) LogConnection(data *ConnectionData) error {
-	return l.writeJSON(data)
+	// Build an ECS-like record using only available data (no external lookups)
+	ecs := make(map[string]interface{})
+
+	// @timestamp in RFC3339 UTC
+	ecs["@timestamp"] = time.Unix(data.Timestamp, 0).UTC().Format(time.RFC3339Nano)
+
+	// event.id
+	ecs["event"] = map[string]interface{}{
+		"id": data.SessionID,
+	}
+
+	// source and destination
+	ecs["source"] = map[string]interface{}{
+		"ip":   data.SourceIP,
+		"port": data.SourcePort,
+	}
+	ecs["destination"] = map[string]interface{}{
+		"ip":   data.DestinationIP,
+		"port": data.DestinationPort,
+	}
+
+	// server hostname from agent name, if present
+	if data.Name != "" {
+		ecs["server"] = map[string]interface{}{ "hostname": data.Name }
+	}
+
+	// network transport/protocol hints (derived from IsTLS)
+	network := map[string]interface{}{
+		"transport": "tcp",
+	}
+	if data.IsTLS {
+		network["protocol"] = "tls"
+	}
+	ecs["network"] = network
+
+	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request
+	payload := data.Payload
+	if payload != "" {
+		// Split headers by CRLF
+		lines := strings.Split(payload, "\r\n")
+		if len(lines) > 0 {
+			// First line: METHOD PATH HTTP/1.1
+			parts := strings.SplitN(lines[0], " ", 3)
+			if len(parts) >= 2 {
+				method := parts[0]
+				path := parts[1]
+				// Only include HTTP fields if method looks like HTTP verb
+				verbs := map[string]bool{"GET":true,"POST":true,"PUT":true,"DELETE":true,"HEAD":true,"OPTIONS":true,"PATCH":true}
+				if verbs[method] {
+					ecs["http"] = map[string]interface{}{
+						"request": map[string]interface{}{"method": method},
+					}
+					ecs["url"] = map[string]interface{}{
+						"path": path,
+					}
+				}
+			}
+
+			// Find User-Agent header
+			for _, ln := range lines[1:] {
+				if ln == "" { // headers end
+					break
+				}
+				if strings.HasPrefix(strings.ToLower(ln), "user-agent:") {
+					ua := strings.TrimSpace(ln[len("user-agent:"):])
+					ecs["user_agent"] = map[string]interface{}{
+						"original": ua,
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// Preserve raw payload and hex as optional fields (not part of standard ECS but useful)
+	ecs["payload"] = data.Payload
+	ecs["payload_hex"] = data.PayloadHex
+
+	return l.writeJSON(ecs)
 }
 
 // writeJSON writes any value as JSON to the output

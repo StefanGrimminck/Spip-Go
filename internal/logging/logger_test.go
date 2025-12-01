@@ -102,36 +102,63 @@ func TestLogConnection(t *testing.T) {
 		t.Fatalf("Failed to seek file: %v", err)
 	}
 
-	// Read and verify connection data
-	var loggedConn ConnectionData
+	// Read and verify ECS-shaped connection data
+	var logged map[string]interface{}
 	decoder := json.NewDecoder(tmpFile)
-	if err := decoder.Decode(&loggedConn); err != nil {
+	if err := decoder.Decode(&logged); err != nil {
 		t.Fatalf("Failed to decode connection data: %v", err)
 	}
 
-	if loggedConn.Payload != connData.Payload {
-		t.Errorf("Connection payload = %v, want %v", loggedConn.Payload, connData.Payload)
+	// Check event.id
+	evt, ok := logged["event"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing event object in logged record")
 	}
-	if loggedConn.PayloadHex != connData.PayloadHex {
-		t.Errorf("Connection payload hex = %v, want %v", loggedConn.PayloadHex, connData.PayloadHex)
+	if id, _ := evt["id"].(string); id != connData.SessionID {
+		t.Errorf("event.id = %v, want %v", id, connData.SessionID)
 	}
-	if loggedConn.SourceIP != connData.SourceIP {
-		t.Errorf("Connection source IP = %v, want %v", loggedConn.SourceIP, connData.SourceIP)
+
+	// Check source
+	src, ok := logged["source"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing source object in logged record")
 	}
-	if loggedConn.SourcePort != connData.SourcePort {
-		t.Errorf("Connection source port = %v, want %v", loggedConn.SourcePort, connData.SourcePort)
+	if sip, _ := src["ip"].(string); sip != connData.SourceIP {
+		t.Errorf("source.ip = %v, want %v", sip, connData.SourceIP)
 	}
-	if loggedConn.DestinationIP != connData.DestinationIP {
-		t.Errorf("Connection destination IP = %v, want %v", loggedConn.DestinationIP, connData.DestinationIP)
+	if sport, _ := src["port"].(float64); uint16(sport) != connData.SourcePort {
+		t.Errorf("source.port = %v, want %v", sport, connData.SourcePort)
 	}
-	if loggedConn.DestinationPort != connData.DestinationPort {
-		t.Errorf("Connection destination port = %v, want %v", loggedConn.DestinationPort, connData.DestinationPort)
+
+	// Check destination
+	dst, ok := logged["destination"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing destination object in logged record")
 	}
-	if loggedConn.SessionID != connData.SessionID {
-		t.Errorf("Connection session ID = %v, want %v", loggedConn.SessionID, connData.SessionID)
+	if dip, _ := dst["ip"].(string); dip != connData.DestinationIP {
+		t.Errorf("destination.ip = %v, want %v", dip, connData.DestinationIP)
 	}
-	if loggedConn.IsTLS != connData.IsTLS {
-		t.Errorf("Connection TLS status = %v, want %v", loggedConn.IsTLS, connData.IsTLS)
+	if dport, _ := dst["port"].(float64); uint16(dport) != connData.DestinationPort {
+		t.Errorf("destination.port = %v, want %v", dport, connData.DestinationPort)
+	}
+
+	// Check network.protocol derived from IsTLS
+	if netObj, ok := logged["network"].(map[string]interface{}); ok {
+		if connData.IsTLS {
+			if proto, _ := netObj["protocol"].(string); proto != "tls" {
+				t.Errorf("network.protocol = %v, want %v", proto, "tls")
+			}
+		}
+	} else {
+		t.Fatalf("missing network object in logged record")
+	}
+
+	// Payload and payload_hex preserved
+	if p, _ := logged["payload"].(string); p != connData.Payload {
+		t.Errorf("payload = %v, want %v", p, connData.Payload)
+	}
+	if ph, _ := logged["payload_hex"].(string); ph != connData.PayloadHex {
+		t.Errorf("payload_hex = %v, want %v", ph, connData.PayloadHex)
 	}
 }
 
