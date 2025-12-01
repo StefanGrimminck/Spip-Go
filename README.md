@@ -21,6 +21,7 @@ Create a file named `config.toml`. A minimal example is below; a fuller example 
 
 Minimal `config.toml`:
 ```toml
+name = "spip-agent"
 ip = "127.0.0.1"
 port = 8080
 ```
@@ -63,6 +64,7 @@ key_path = "/path/to/key.pem"
 Spip logs each connection and system event as a JSON object. Example connection log:
 ```json
 {
+  "name": "spip-agent",
   "timestamp": 1688737798,
   "payload": "BitTorrent protocol",
   "payload_hex": "426974546f7272656e742070726f746f636f6c",
@@ -106,3 +108,14 @@ Note: Running e2e tests requires root privileges for iptables manipulation.
 ## Developer
 
 Use the provided `Makefile` for common developer tasks (for example `make fmt`, `make test`, `make e2e`). The Makefile is a local convenience only; CI runs tests directly in the workflow on clean runners.
+
+## Initial setup (convenience)
+
+The repository includes a helper script to generate a `config.toml`, optional self-signed TLS keys, and apply the iptables PREROUTING redirect rules (excluding SSH).
+
+Run as root from the repo root:
+```bash
+sudo ./scripts/initial_setup.sh
+```
+
+The script prompts for a short agent `name` (written to `config.toml`) which appears in each connection log, and offers to back up and apply iptables rules. If you don't want the script to change iptables, answer no and it will only write the `config.toml`.

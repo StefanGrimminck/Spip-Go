@@ -28,6 +28,8 @@ type LogMessage struct {
 
 // ConnectionData represents TCP connection data
 type ConnectionData struct {
+	// Name of the agent that produced this record (optional)
+	Name            string `json:"name,omitempty"`
 	Timestamp       int64  `json:"timestamp"`
 	Payload         string `json:"payload"`
 	PayloadHex      string `json:"payload_hex"`

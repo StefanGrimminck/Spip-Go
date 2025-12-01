@@ -25,6 +25,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name: "valid config",
 			content: `
+				name = "test-agent"
 				ip = "127.0.0.1"
 				port = 12345
 				cert_path = "cert.pem"
@@ -37,6 +38,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			name: "minimal config",
 			content: `
+				name = "test-agent"
 				ip = "0.0.0.0"
 				port = 8080
 			`,
@@ -90,6 +92,7 @@ func TestConfigValidation(t *testing.T) {
 		{
 			name: "valid config",
 			config: Config{
+                Name: "test-agent",
 				IP:   "127.0.0.1",
 				Port: 12345,
 			},
