@@ -208,6 +208,10 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 	var tlsServerName string
 	var tlsVersion string
 	var tlsCipherSuite string
+	var tlsClientSubject string
+	var tlsClientIssuer string
+	var tlsClientNotBefore int64
+	var tlsClientNotAfter int64
 	if h.tlsHandler != nil {
 		wrappedConn, isTLS, err := h.tlsHandler.WrapConnection(conn)
 		if err != nil {
@@ -236,6 +240,21 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 						tlsVersion = ""
 					}
 					tlsCipherSuite = cryptotls.CipherSuiteName(cs.CipherSuite)
+
+					// Capture client certificate details when mTLS is used
+					if len(cs.PeerCertificates) > 0 {
+						cert := cs.PeerCertificates[0]
+						tlsClientSubject = cert.Subject.String()
+						if cert.Issuer.String() != "" {
+							tlsClientIssuer = cert.Issuer.String()
+						}
+						if !cert.NotBefore.IsZero() {
+							tlsClientNotBefore = cert.NotBefore.Unix()
+						}
+						if !cert.NotAfter.IsZero() {
+							tlsClientNotAfter = cert.NotAfter.Unix()
+						}
+					}
 				}
 				stream = tls.NewTLSStream(wrappedConn)
 			} else {
@@ -295,6 +314,10 @@ func (h *Handler) HandleConnection(conn *net.TCPConn) {
 				TLSServerName:   tlsServerName,
 				TLSVersion:      tlsVersion,
 				TLSCipherSuite:  tlsCipherSuite,
+				TLSClientSubject:  tlsClientSubject,
+				TLSClientIssuer:   tlsClientIssuer,
+				TLSClientNotBefore: tlsClientNotBefore,
+				TLSClientNotAfter:  tlsClientNotAfter,
 			}
 
 			if err := h.logger.LogConnection(connData); err != nil {
