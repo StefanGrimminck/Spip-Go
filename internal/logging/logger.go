@@ -41,6 +41,8 @@ type ConnectionData struct {
 	DestinationPort uint16 `json:"destination_port"`
 	SessionID       string `json:"session_id"`
 	IsTLS           bool   `json:"is_tls"`
+	TLSALPN         string `json:"tls_alpn,omitempty"`
+	TLSServerName   string `json:"tls_server_name,omitempty"`
 }
 
 // Logger defines the interface for logging operations
@@ -112,6 +114,18 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 	}
 	ecs["network"] = network
 
+	// Include TLS metadata (ALPN / SNI) if available
+	if data.TLSALPN != "" || data.TLSServerName != "" {
+		tlsObj := map[string]interface{}{}
+		if data.TLSServerName != "" {
+			tlsObj["server_name"] = data.TLSServerName
+		}
+		if data.TLSALPN != "" {
+			tlsObj["alpn"] = data.TLSALPN
+		}
+		ecs["tls"] = tlsObj
+	}
+
 	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request.
 	// Use a stricter check: require a valid request-line and either a header
 	// terminator ("\r\n\r\n") or an explicit Host header. This reduces
@@ -146,7 +160,13 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 					}
 				}
 
-				if hasTerminator || hasHost {
+				// If ALPN indicates HTTP (e.g. http/1.1 or h2) we can be more permissive
+				alpnIndicatesHTTP := false
+				if data.IsTLS && (data.TLSALPN == "http/1.1" || data.TLSALPN == "h2" || data.TLSALPN == "h2-14") {
+					alpnIndicatesHTTP = true
+				}
+
+				if hasTerminator || hasHost || alpnIndicatesHTTP {
 					// Treat as HTTP
 					httpObj["request"] = map[string]interface{}{"method": method}
 					ecs["url"] = map[string]interface{}{"path": path}
