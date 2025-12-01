@@ -1,24 +1,28 @@
 # Spip - Internet Sensor
 
-Spip is a network monitoring tool that logs all incoming TCP traffic, including both plain and TLS-encrypted connections. It is designed for easy deployment and immediate insight into your network activity. Spip is made to run on a dedicated machine, like a honeypot, but can also be run locally.
+Spip is a lightweight network sensor that logs incoming TCP traffic (plain and TLS) as structured JSON records for easy ingestion.
 
 ## Quick Start
 
-### Prerequisites
+**Prerequisites**
 - Go 1.24.0 or later
-- Linux system with iptables
-- Root access (for iptables configuration)
+- Linux with `iptables`
+- Root access (required to apply the example iptables rules)
 
-### 1. Build the Agent
+1) Build the agent
 ```bash
 git clone https://github.com/StefanGrimminck/Spip-Go.git
 cd Spip-Go
 go build -o spip-agent ./cmd/spip-agent
 ```
 
-### 2. Create a Configuration File
-Create a file named `config.toml`. A minimal example is below; a fuller example with optional tuning is in `config.example.toml`.
+2) (Optional) Use the interactive setup helper
+```bash
+sudo ./scripts/initial_setup.sh
+```
+This helper writes a `config.toml` (it prompts for a short `name` used in logs), can generate self-signed TLS keys, and optionally applies the PREROUTING iptables redirect used in examples below.
 
+3) Create or edit `config.toml`
 Minimal `config.toml`:
 ```toml
 name = "spip-agent"
@@ -26,96 +30,76 @@ ip = "127.0.0.1"
 port = 8080
 ```
 
-Optional fields
-- `cert_path` / `key_path`: paths to TLS certificate and key. Provide both to enable TLS.
-- `log_file`: path to write logs instead of stdout.
-- `read_timeout_seconds` / `write_timeout_seconds`: per-connection timeouts in seconds.
-- `rate_limit_per_second` / `rate_limit_burst`: rate limiter settings for incoming connections.
+Optional configuration keys:
+- `cert_path` / `key_path` — enable TLS if both set
+- `log_file` — write logs to a file instead of stdout
+- `read_timeout_seconds` / `write_timeout_seconds` — connection timeouts
+- `rate_limit_per_second` / `rate_limit_burst` — connection rate-limiting
 
-A commented example `config.toml` is included in the repository. Edit `config.toml` with values appropriate for your environment before running the agent.
-
-### 3. Redirect Traffic (Example: redirect incoming TCP to the agent, excluding SSH)
+4) Redirect incoming TCP to the agent (example, excluding SSH)
 ```bash
 sudo iptables -t nat -F
 sudo iptables -t nat -A PREROUTING -p tcp --dport 22 -j RETURN
 sudo iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 8080
 ```
 
-### 4. Run Spip
+5) Run the agent
 ```bash
 ./spip-agent -config config.toml
 ```
 
-You will now see all incoming TCP connections logged in structured JSON format.
+## Log format
+Spip emits each connection as a single JSON object. The output is formatted to be ECS-compatible using only the fields Spip can provide (no ASN/geo enrichment). Typical fields produced include:
+- `@timestamp` — RFC3339 timestamp for the event
+- `event.id` — per-connection session identifier
+- `observer.hostname` / `host.name` — agent `name` from config
+- `source.ip`, `source.port` and `destination.ip`, `destination.port`
+- `network.transport` — e.g. `tcp`
+- `http.request.body` / `url.path` — when the payload resembles HTTP
+- `user_agent.original` — when available
+- `event.original_payload_hex` — raw payload hex (if not parsed as HTTP)
 
-## TLS Support (Optional)
-To enable TLS, generate a certificate and update your configuration:
-```bash
-openssl genrsa -out key.pem 2048
-openssl req -x509 -new -nodes -key key.pem -sha256 -days 365 -out cert.pem
-```
-Add to `config.toml`:
-```toml
-cert_path = "/path/to/cert.pem"
-key_path = "/path/to/key.pem"
-```
-
-## Log Output Example
-Spip logs each connection and system event as a JSON object. Example connection log:
+Example (ECS-shaped) record produced by Spip:
 ```json
 {
-  "name": "spip-agent",
-  "timestamp": 1688737798,
-  "payload": "BitTorrent protocol",
-  "payload_hex": "426974546f7272656e742070726f746f636f6c",
-  "source_ip": "146.70.1.1",
-  "source_port": 35882,
-  "destination_ip": "146.190.1.1",
-  "destination_port": 6881,
-  "session_id": "bd30cdc1-95b0-49aa-b8fe-e77230b6a04f",
-  "is_tls": false
+  "@timestamp": "2025-12-01T19:35:18.123Z",
+  "event": {"id": "bd30cdc1-95b0-49aa-b8fe-e77230b6a04f"},
+  "observer": {"hostname": "spip-agent"},
+  "host": {"name": "spip-agent"},
+  "source": {"ip": "146.70.1.1", "port": 35882},
+  "destination": {"ip": "146.190.1.1", "port": 6881},
+  "network": {"transport": "tcp"},
+  "http": {"request": {"body": "BitTorrent protocol"}},
+  "url": {"path": "/announce"},
+  "user_agent": {"original": "curl/7.68.0"},
+  "event": {"original_payload_hex": "426974546f7272656e742070726f746f636f6c"}
 }
 ```
-System messages are also logged in JSON for easy parsing and monitoring.
+
+Note: the agent only emits fields it can derive from the connection payload and metadata. Downstream systems can enrich these records (geo, ASN, etc.) if desired.
 
 ## Project Structure
 ```
 .
-├── cmd/
-│   └── spip-agent/        # Main application entry point
-├── internal/
-│   ├── config/           # Configuration handling
-│   ├── logging/          # JSON logging implementation
-│   ├── network/          # Network operations and socket handling
-│   └── tls/             # TLS connection handling
-├── pkg/
-│   └── socket/          # cgo bindings for socket operations
-├── test/
-│   └── e2e/            # End-to-end tests
-└── scripts/             # Utility scripts
+├── cmd/                 # Main application entry point
+├── internal/            # Configuration, logging, network, TLS
+├── pkg/                 # cgo helpers (socket operations)
+├── test/                # End-to-end test helpers
+└── scripts/             # Utility scripts (including `initial_setup.sh`)
 ```
 
 ## Testing
-The project includes tests for:
-- TCP and TLS connection handling
-- Concurrent connection processing
-- Connection reset and process restart scenarios
-- Original destination preservation
-- High load testing
+Run unit tests with:
+```bash
+go test ./...
+```
 
-Note: Running e2e tests requires root privileges for iptables manipulation.
+End-to-end tests require privileges to manipulate `iptables` and are runnable via the included container helper scripts (see `scripts/`).
 
-## Developer
-
-Use the provided `Makefile` for common developer tasks (for example `make fmt`, `make test`, `make e2e`). The Makefile is a local convenience only; CI runs tests directly in the workflow on clean runners.
-
-## Initial setup (convenience)
-
-The repository includes a helper script to generate a `config.toml`, optional self-signed TLS keys, and apply the iptables PREROUTING redirect rules (excluding SSH).
-
-Run as root from the repo root:
+## Initial setup helper
+Run the interactive helper from the repo root (requires root when applying iptables rules):
 ```bash
 sudo ./scripts/initial_setup.sh
 ```
+The script prompts for a short `name` written into `config.toml`, which appears in each connection log as `observer.hostname` / `host.name`.
 
-The script prompts for a short agent `name` (written to `config.toml`) which appears in each connection log, and offers to back up and apply iptables rules. If you don't want the script to change iptables, answer no and it will only write the `config.toml`.

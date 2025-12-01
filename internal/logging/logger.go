@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -39,6 +41,8 @@ type ConnectionData struct {
 	DestinationPort uint16 `json:"destination_port"`
 	SessionID       string `json:"session_id"`
 	IsTLS           bool   `json:"is_tls"`
+	TLSALPN         string `json:"tls_alpn,omitempty"`
+	TLSServerName   string `json:"tls_server_name,omitempty"`
 }
 
 // Logger defines the interface for logging operations
@@ -76,7 +80,155 @@ func (l *FileLogger) Log(level LogLevel, target, message string) error {
 
 // LogConnection writes connection data in JSON format
 func (l *FileLogger) LogConnection(data *ConnectionData) error {
-	return l.writeJSON(data)
+	// Build an ECS-like record using only available data (no external lookups)
+	ecs := make(map[string]interface{})
+
+	// @timestamp in RFC3339 UTC
+	ecs["@timestamp"] = time.Unix(data.Timestamp, 0).UTC().Format(time.RFC3339Nano)
+
+	// event.id
+	ecs["event"] = map[string]interface{}{
+		"id": data.SessionID,
+	}
+
+	// source and destination
+	ecs["source"] = map[string]interface{}{
+		"ip":   data.SourceIP,
+		"port": data.SourcePort,
+	}
+	ecs["destination"] = map[string]interface{}{
+		"ip":   data.DestinationIP,
+		"port": data.DestinationPort,
+	}
+
+	// observer and host hostname from agent name, if present (ECS fields)
+	if data.Name != "" {
+		ecs["observer"] = map[string]interface{}{"hostname": data.Name, "id": data.Name} // observer.hostname + observer.id
+		ecs["host"] = map[string]interface{}{"name": data.Name}                          // host.name
+	}
+
+	// network transport/protocol hints (derived from IsTLS)
+	network := map[string]interface{}{"transport": "tcp"}
+	if data.IsTLS {
+		network["protocol"] = "tls"
+	}
+	ecs["network"] = network
+
+	// Include TLS metadata (ALPN / SNI) if available
+	if data.TLSALPN != "" || data.TLSServerName != "" {
+		tlsObj := map[string]interface{}{}
+		if data.TLSServerName != "" {
+			tlsObj["server_name"] = data.TLSServerName
+		}
+		if data.TLSALPN != "" {
+			tlsObj["alpn"] = data.TLSALPN
+		}
+		ecs["tls"] = tlsObj
+	}
+
+	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request.
+	// Use a stricter check: require a valid request-line and either a header
+	// terminator ("\r\n\r\n") or an explicit Host header. This reduces
+	// false positives when processing arbitrary probes.
+	payload := data.Payload
+	if payload != "" {
+		// Prepare http container
+		httpObj := map[string]interface{}{}
+
+		// Split into lines by CRLF
+		lines := strings.Split(payload, "\r\n")
+
+		// Regex for a basic HTTP/1.x request-line: METHOD SP PATH SP HTTP/1.[01]
+		reqLineRe := regexp.MustCompile(`^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+HTTP/1\.[01]$`)
+
+		if len(lines) > 0 {
+			reqLine := lines[0]
+			if m := reqLineRe.FindStringSubmatch(reqLine); m != nil {
+				method := m[1]
+				path := m[2]
+
+				// Check for header terminator or Host header presence
+				hasTerminator := strings.Contains(payload, "\r\n\r\n")
+				hasHost := false
+				for _, ln := range lines[1:] {
+					if ln == "" { // end of headers
+						break
+					}
+					if strings.HasPrefix(strings.ToLower(ln), "host:") {
+						hasHost = true
+						break
+					}
+				}
+
+				// If ALPN indicates HTTP (e.g. http/1.1 or h2) we can be more permissive
+				alpnIndicatesHTTP := false
+				if data.IsTLS && (data.TLSALPN == "http/1.1" || data.TLSALPN == "h2" || data.TLSALPN == "h2-14") {
+					alpnIndicatesHTTP = true
+				}
+
+				if hasTerminator || hasHost || alpnIndicatesHTTP {
+					// Treat as HTTP
+					httpObj["request"] = map[string]interface{}{"method": method}
+					ecs["url"] = map[string]interface{}{"path": path}
+
+					// Extract User-Agent if present
+					for _, ln := range lines[1:] {
+						if ln == "" {
+							break
+						}
+						if strings.HasPrefix(strings.ToLower(ln), "user-agent:") {
+							ua := strings.TrimSpace(ln[len("user-agent:"):])
+							ecs["user_agent"] = map[string]interface{}{"original": ua}
+							break
+						}
+					}
+
+					// Put raw payload into http.request.body for HTTP flows
+					if _, ok := httpObj["request"]; !ok {
+						httpObj["request"] = map[string]interface{}{}
+					}
+					if req, ok := httpObj["request"].(map[string]interface{}); ok {
+						req["body"] = payload
+					}
+					ecs["http"] = httpObj
+				} else {
+					// Looks like a request-line but missing headers/terminator => don't
+					// classify as HTTP. Preserve payload in event.summary.
+					ecs["event"] = map[string]interface{}{
+						"id":      data.SessionID,
+						"summary": data.Payload,
+					}
+				}
+			} else {
+				// Not an HTTP request-line: preserve payload in event.summary
+				ecs["event"] = map[string]interface{}{
+					"id":      data.SessionID,
+					"summary": data.Payload,
+				}
+			}
+		}
+	}
+
+	// place original payload hex under event.original_payload_hex (ECS extension)
+	if data.PayloadHex != "" {
+		// ensure event map exists
+		if ev, ok := ecs["event"].(map[string]interface{}); ok {
+			ev["original_payload_hex"] = data.PayloadHex
+			ecs["event"] = ev
+		} else {
+			ecs["event"] = map[string]interface{}{"id": data.SessionID, "original_payload_hex": data.PayloadHex}
+		}
+	}
+
+	// Mark ingestion source so downstream consumers know this record came from Spip
+	if ev, ok := ecs["event"].(map[string]interface{}); ok {
+		ev["ingested_by"] = "spip"
+		ecs["event"] = ev
+	} else {
+		ecs["event"] = map[string]interface{}{"id": data.SessionID, "ingested_by": "spip"}
+	}
+
+	return l.writeJSON(ecs)
 }
 
 // writeJSON writes any value as JSON to the output
