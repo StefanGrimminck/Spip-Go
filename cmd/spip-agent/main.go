@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -100,16 +101,28 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	acceptErrCh := make(chan error, 1)
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				// If listener was closed as part of shutdown, exit goroutine
-				acceptErrCh <- err
+				// If the listener is closed as part of shutdown, exit quietly.
+				var netErr net.Error
+				if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
+					return
+				}
+				if errors.As(err, &netErr) && !netErr.Timeout() {
+					logger.Error("main", fmt.Sprintf("Listener accept failed: %v", err))
+				}
 				return
 			}
-			tcpConn := conn.(*net.TCPConn)
+
+			tcpConn, ok := conn.(*net.TCPConn)
+			if !ok {
+				logger.Error("main", fmt.Sprintf("Unexpected non-TCP connection type: %T", conn))
+				conn.Close()
+				continue
+			}
+
 			go handler.HandleConnection(tcpConn)
 		}
 	}()
