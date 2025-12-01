@@ -98,15 +98,14 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 		"port": data.DestinationPort,
 	}
 
-	// server hostname from agent name, if present
+	// observer and host hostname from agent name, if present (ECS fields)
 	if data.Name != "" {
-		ecs["server"] = map[string]interface{}{ "hostname": data.Name }
+		ecs["observer"] = map[string]interface{}{"hostname": data.Name} // observer.hostname
+		ecs["host"] = map[string]interface{}{"name": data.Name}         // host.name
 	}
 
 	// network transport/protocol hints (derived from IsTLS)
-	network := map[string]interface{}{
-		"transport": "tcp",
-	}
+	network := map[string]interface{}{"transport": "tcp"}
 	if data.IsTLS {
 		network["protocol"] = "tls"
 	}
@@ -115,6 +114,8 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 	// Attempt lightweight HTTP parsing from payload if it resembles an HTTP request
 	payload := data.Payload
 	if payload != "" {
+		// Prepare http and url containers
+		httpObj := map[string]interface{}{}
 		// Split headers by CRLF
 		lines := strings.Split(payload, "\r\n")
 		if len(lines) > 0 {
@@ -124,14 +125,10 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 				method := parts[0]
 				path := parts[1]
 				// Only include HTTP fields if method looks like HTTP verb
-				verbs := map[string]bool{"GET":true,"POST":true,"PUT":true,"DELETE":true,"HEAD":true,"OPTIONS":true,"PATCH":true}
+				verbs := map[string]bool{"GET": true, "POST": true, "PUT": true, "DELETE": true, "HEAD": true, "OPTIONS": true, "PATCH": true}
 				if verbs[method] {
-					ecs["http"] = map[string]interface{}{
-						"request": map[string]interface{}{"method": method},
-					}
-					ecs["url"] = map[string]interface{}{
-						"path": path,
-					}
+					httpObj["request"] = map[string]interface{}{"method": method}
+					ecs["url"] = map[string]interface{}{"path": path}
 				}
 			}
 
@@ -142,18 +139,44 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 				}
 				if strings.HasPrefix(strings.ToLower(ln), "user-agent:") {
 					ua := strings.TrimSpace(ln[len("user-agent:"):])
-					ecs["user_agent"] = map[string]interface{}{
-						"original": ua,
-					}
+					ecs["user_agent"] = map[string]interface{}{"original": ua}
 					break
 				}
 			}
 		}
+
+		// place raw payload into ECS http.request.body when appropriate
+		if len(httpObj) > 0 {
+			// ensure request map exists
+			if _, ok := httpObj["request"]; !ok {
+				httpObj["request"] = map[string]interface{}{}
+			}
+			if req, ok := httpObj["request"].(map[string]interface{}); ok {
+				req["body"] = payload
+			}
+			ecs["http"] = httpObj
+		} else {
+			// non-HTTP payloads: keep top-level message in event.summary for ECS consumers
+			// and still include body under http.request.body for downstream tools that expect it
+			ecs["event"] = map[string]interface{}{
+				"id":      data.SessionID,
+				"summary": data.Payload,
+			}
+			// create http.request.body to keep payload accessible
+			ecs["http"] = map[string]interface{}{"request": map[string]interface{}{"body": payload}}
+		}
 	}
 
-	// Preserve raw payload and hex as optional fields (not part of standard ECS but useful)
-	ecs["payload"] = data.Payload
-	ecs["payload_hex"] = data.PayloadHex
+	// place original payload hex under event.original_payload_hex (ECS extension)
+	if data.PayloadHex != "" {
+		// ensure event map exists
+		if ev, ok := ecs["event"].(map[string]interface{}); ok {
+			ev["original_payload_hex"] = data.PayloadHex
+			ecs["event"] = ev
+		} else {
+			ecs["event"] = map[string]interface{}{"id": data.SessionID, "original_payload_hex": data.PayloadHex}
+		}
+	}
 
 	return l.writeJSON(ecs)
 }
