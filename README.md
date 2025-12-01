@@ -1,6 +1,6 @@
-# Spip - Internet Sensor
+# Spip - Network Honeypot Sensor
 
-Spip is a lightweight network sensor that logs incoming TCP traffic (plain and TLS) as structured JSON records for easy ingestion.
+Spip is a lightweight, low-interaction network honeypot sensor. It listens for arbitrary incoming TCP traffic (plain and TLS), captures what scanners and bots send, and logs each connection as structured JSON (ECS-shaped) for easy ingestion into your SIEM or data lake.
 
 ## Quick Start
 
@@ -59,9 +59,10 @@ Spip emits each connection as a single JSON object. The output is formatted to b
 - `observer.hostname` / `host.name` — agent `name` from config
 - `source.ip`, `source.port` and `destination.ip`, `destination.port`
 - `network.transport` — e.g. `tcp`
-- `http.request.body` / `url.path` — when the payload resembles HTTP
+- `http.request.body` / `url.path` — when the payload clearly resembles HTTP
 - `user_agent.original` — when available
-- `event.original_payload_hex` — raw payload hex (if not parsed as HTTP)
+- `event.summary` — raw payload for non-HTTP probes
+- `event.original_payload_hex` — raw payload hex (always preserved)
 
 Example (ECS-shaped) record produced by Spip:
 ```json
@@ -69,6 +70,7 @@ Example (ECS-shaped) record produced by Spip:
   "@timestamp": "2025-12-01T19:35:18.123Z",
   "event": {
     "id": "bd30cdc1-95b0-49aa-b8fe-e77230b6a04f",
+    "summary": "BitTorrent protocol",
     "original_payload_hex": "426974546f7272656e742070726f746f636f6c",
     "ingested_by": "spip"
   },
@@ -76,10 +78,7 @@ Example (ECS-shaped) record produced by Spip:
   "host": {"name": "spip-agent"},
   "source": {"ip": "146.70.1.1", "port": 35882},
   "destination": {"ip": "146.190.1.1", "port": 6881},
-  "network": {"transport": "tcp"},
-  "http": {"request": {"body": "BitTorrent protocol"}},
-  "url": {"path": "/announce"},
-  "user_agent": {"original": "curl/7.68.0"}
+  "network": {"transport": "tcp"}
 }
 ```
 
@@ -102,11 +101,12 @@ go test ./...
 ```
 
 End-to-end tests require privileges to manipulate `iptables` and are runnable via the included container helper scripts (see `scripts/`).
-## Notes on HTTP parsing and security
+
+## Notes on HTTP parsing and deployment
 
 Spip performs best-effort HTTP request detection from the captured payload. When the payload clearly resembles an HTTP request (valid request line plus basic headers or ALPN), the agent emits `http.*`, `url.path`, and `user_agent.original` fields. When it does not, Spip falls back to storing the payload in `event.summary` and always preserves the raw payload hex in `event.original_payload_hex`.
 
-Because Spip reflects the source IP in its responses and accepts arbitrary inbound TCP traffic, it is best deployed in controlled or monitored environments (for example, honeypot-style sensors or edge collectors) rather than on untrusted endpoints.
+Because Spip reflects the source IP in its responses and accepts arbitrary inbound TCP traffic, it is intended for use as a honeypot-style sensor or edge collector in controlled/monitored environments, not on arbitrary user endpoints.
 ## Initial setup helper
 Run the interactive helper from the repo root (requires root when applying iptables rules):
 ```bash
