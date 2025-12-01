@@ -302,6 +302,14 @@ func TestTCPConnection(t *testing.T) {
 			if err := ValidateLogEntry(entry, string(payload), false); err != nil {
 				t.Errorf("Invalid JSON structure: %v", err)
 			}
+
+			// Additional ECS-specific expectations for non-HTTP TCP payloads
+			if entry.SourceIP == "" || entry.DestinationIP == "" {
+				t.Errorf("expected source and destination IPs to be set, got src=%q dst=%q", entry.SourceIP, entry.DestinationIP)
+			}
+			if entry.PayloadHex == "" {
+				t.Errorf("expected PayloadHex (event.original_payload_hex) to be populated for payload %q", entry.Payload)
+			}
 			break
 		}
 	}
