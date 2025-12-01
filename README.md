@@ -33,11 +33,11 @@ Optional fields
 
 A commented example `config.toml` is included in the repository. Edit `config.toml` with values appropriate for your environment before running the agent.
 
-### 3. Redirect Traffic (Example: all local TCP except SSH)
+### 3. Redirect Traffic (Example: redirect incoming TCP to the agent, excluding SSH)
 ```bash
 sudo iptables -t nat -F
-sudo iptables -t nat -A OUTPUT -p tcp -d localhost --dport 22 -j ACCEPT
-sudo iptables -t nat -A OUTPUT -p tcp -d localhost -j REDIRECT --to-port 12345
+sudo iptables -t nat -A PREROUTING -p tcp --dport 22 -j RETURN
+sudo iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 8080
 ```
 
 ### 4. Run Spip
