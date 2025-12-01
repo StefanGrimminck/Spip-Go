@@ -17,12 +17,21 @@ go build -o spip-agent ./cmd/spip-agent
 ```
 
 ### 2. Create a Configuration File
-Create a file named `config.toml`:
+Create a file named `config.toml`. A minimal example is below; a fuller example with optional tuning is in `config.example.toml`.
+
+Minimal `config.toml`:
 ```toml
-ip = "0.0.0.0"          # Listen address
-port = 12345             # Listen port
-# log_file = "/var/log/spip.log"  # Optional: log to file instead of stdout
+ip = "127.0.0.1"
+port = 8080
 ```
+
+Optional fields
+- `cert_path` / `key_path`: paths to TLS certificate and key. Provide both to enable TLS.
+- `log_file`: path to write logs instead of stdout.
+- `read_timeout_seconds` / `write_timeout_seconds`: per-connection timeouts in seconds.
+- `rate_limit_per_second` / `rate_limit_burst`: rate limiter settings for incoming connections.
+
+A commented example `config.toml` is included in the repository. Edit `config.toml` with values appropriate for your environment before running the agent.
 
 ### 3. Redirect Traffic (Example: all local TCP except SSH)
 ```bash
