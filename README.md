@@ -2,6 +2,8 @@
 
 Spip is a lightweight, low-interaction network honeypot sensor. It listens for arbitrary incoming TCP traffic (plain and TLS), captures what scanners and bots send, and logs each connection as structured JSON (ECS-shaped) for easy ingestion into your SIEM or data lake.
 
+
+
 ## Quick Start
 
 **Prerequisites**
