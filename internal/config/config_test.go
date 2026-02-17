@@ -54,6 +54,23 @@ func TestLoadConfig(t *testing.T) {
 			`,
 			wantErr: true,
 		},
+		{
+			name: "loom enabled valid",
+			content: `
+name = "test-agent"
+ip = "127.0.0.1"
+port = 8080
+[loom]
+enabled = true
+url = "https://loom.local/ingest"
+sensor_id = "sensor-1"
+token = "secret"
+flush_interval = "5s"
+			`,
+			wantErr:      false,
+			validateIP:   "127.0.0.1",
+			validatePort: 8080,
+		},
 	}
 
 	for _, tt := range tests {
@@ -118,6 +135,22 @@ func TestConfigValidation(t *testing.T) {
 				IP:       "127.0.0.1",
 				Port:     12345,
 				CertPath: "cert.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "loom enabled missing url",
+			config: Config{
+				Name: "x", IP: "127.0.0.1", Port: 8080,
+				Loom: LoomConfig{Enabled: true, SensorID: "s", Token: "t"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "loom enabled missing token",
+			config: Config{
+				Name: "x", IP: "127.0.0.1", Port: 8080,
+				Loom: LoomConfig{Enabled: true, URL: "https://x", SensorID: "s"},
 			},
 			wantErr: true,
 		},
