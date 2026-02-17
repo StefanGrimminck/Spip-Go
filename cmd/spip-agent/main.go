@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"spip/internal/config"
+	"spip/internal/exporters/loom"
 	"spip/internal/logging"
 	"spip/internal/network"
 	"spip/internal/tls"
@@ -33,21 +34,36 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create logger
-	var logger logging.Logger
+	var logOutput *os.File
 	if cfg.LogFile != "" {
-		logFile, err := os.OpenFile(cfg.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(cfg.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
 			os.Exit(1)
 		}
-		defer logFile.Close()
-		logger = logging.NewLogger(logFile)
+		defer f.Close()
+		logOutput = f
 	} else {
-		logger = logging.NewLogger(os.Stdout)
+		logOutput = os.Stdout
+	}
+
+	var logger logging.Logger
+	var loomShipper *loom.Shipper
+	if cfg.Loom.Enabled {
+		loomShipper = loom.NewShipper(&cfg.Loom, func(msg string) {
+			fmt.Fprintf(os.Stderr, "loom: %s\n", msg)
+		})
+		loomCh, _ := loomShipper.Run()
+		logger = logging.NewLoggerWithECSChannel(logOutput, loomCh)
+	}
+	if logger == nil {
+		logger = logging.NewLogger(logOutput)
 	}
 
 	fmt.Fprintln(os.Stderr, "Starting Spip agent...")
+	if cfg.Loom.Enabled {
+		fmt.Fprintln(os.Stderr, "Loom enabled")
+	}
 
 	// Initialize TLS if configured
 	var tlsHandler *tls.TLSHandler
@@ -132,10 +148,12 @@ func main() {
 	fmt.Fprintln(os.Stderr, "Shutdown signal received, closing listener")
 	listener.Close()
 
-	// Give active connections up to 15s to finish, then force close
 	if err := handler.Shutdown(15 * time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "Graceful shutdown completed with error: %v\n", err)
 	} else {
 		fmt.Fprintln(os.Stderr, "Graceful shutdown completed")
+	}
+	if loomShipper != nil {
+		loomShipper.Shutdown()
 	}
 }

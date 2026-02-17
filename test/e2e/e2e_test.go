@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -200,6 +201,30 @@ key_path = "%s"
 	return configPath
 }
 
+func createTestConfigWithLoom(t *testing.T, useTLS bool, certPath, keyPath, loomURL string) string {
+	path := createTestConfig(t, useTLS, certPath, keyPath)
+	if loomURL == "" {
+		return path
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	loomBlock := fmt.Sprintf(`
+[loom]
+enabled = true
+url = "%s"
+sensor_id = "e2e-sensor"
+token = "e2e-token"
+batch_size = 10
+flush_interval = "2s"
+`, loomURL)
+	if err := os.WriteFile(path, append(content, []byte(loomBlock)...), 0644); err != nil {
+		t.Fatalf("write config with loom: %v", err)
+	}
+	return path
+}
+
 func stopSpip(t *testing.T, process *os.Process) {
 	if process != nil {
 		process.Kill()
@@ -356,6 +381,111 @@ func TestTLSConnection(t *testing.T) {
 	if !bytes.Equal(response, expectedResponse) {
 		t.Errorf("Got HTTPS response %q, want %q", string(response), string(expectedResponse))
 	}
+}
+
+func TestLoomShipper(t *testing.T) {
+	var received [][]map[string]interface{}
+	var mu sync.Mutex
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				t.Errorf("loom server: unexpected method %s", r.Method)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			var batch []map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+				t.Errorf("loom server: decode: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			received = append(received, batch)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+		}),
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("loom listen: %v", err)
+	}
+	go srv.Serve(ln)
+	defer ln.Close()
+
+	loomURL := "http://" + ln.Addr().String()
+
+	cmd := exec.Command("go", "build", "-o", filepath.Join("..", "..", "spip-agent"), filepath.Join("..", "..", "cmd", "spip-agent"))
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("build spip-agent: %v", err)
+	}
+	if err := setupIptables(t); err != nil {
+		t.Fatalf("setup iptables: %v", err)
+	}
+	defer cleanupIptables(t)
+
+	configPath := createTestConfigWithLoom(t, false, "", "", loomURL)
+	defer os.RemoveAll(filepath.Dir(configPath))
+
+	process, stdout, stdoutPipe := startSpip(t, configPath)
+	defer func() {
+		stopSpip(t, process)
+		if stdoutPipe != nil {
+			stdoutPipe.Close()
+		}
+	}()
+
+	payload := []byte("Loom E2E payload")
+	response, err := makeTCPRequest(t, false, payload)
+	if err != nil {
+		t.Fatalf("TCP request: %v", err)
+	}
+	if !bytes.Equal(response, []byte(testHost)) {
+		t.Errorf("response: got %q, want %q", string(response), testHost)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(received)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	mu.Lock()
+	batches := received
+	mu.Unlock()
+
+	if len(batches) == 0 {
+		t.Fatalf("loom server received no batches (stdout snippet: %s)", string(stdout.Bytes()[:min(500, stdout.Len())]))
+	}
+	var found bool
+	for _, batch := range batches {
+		for _, ev := range batch {
+			src, _ := ev["source"].(map[string]interface{})
+			if src != nil && src["ip"] == testHost {
+				if ev["event"] != nil {
+					found = true
+					break
+				}
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Errorf("no ECS event with source.ip=%s in received batches: %+v", testHost, batches)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func TestConcurrentConnections(t *testing.T) {
