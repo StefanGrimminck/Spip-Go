@@ -32,24 +32,24 @@ type LogMessage struct {
 // ConnectionData represents TCP connection data
 type ConnectionData struct {
 	// Name of the agent that produced this record (optional)
-	Name              string `json:"name,omitempty"`
-	Timestamp         int64  `json:"timestamp"`
-	Payload           string `json:"payload"`
-	PayloadHex        string `json:"payload_hex"`
-	SourceIP          string `json:"source_ip"`
-	SourcePort        uint16 `json:"source_port"`
-	DestinationIP     string `json:"destination_ip"`
-	DestinationPort   uint16 `json:"destination_port"`
-	SessionID         string `json:"session_id"`
-	IsTLS             bool   `json:"is_tls"`
-	TLSALPN           string `json:"tls_alpn,omitempty"`
-	TLSServerName     string `json:"tls_server_name,omitempty"`
-	TLSVersion        string `json:"tls_version,omitempty"`
-	TLSCipherSuite    string `json:"tls_cipher_suite,omitempty"`
-	TLSClientSubject  string `json:"tls_client_subject,omitempty"`
-	TLSClientIssuer   string `json:"tls_client_issuer,omitempty"`
-	TLSClientNotBefore int64 `json:"tls_client_not_before,omitempty"`
-	TLSClientNotAfter  int64 `json:"tls_client_not_after,omitempty"`
+	Name               string `json:"name,omitempty"`
+	Timestamp          int64  `json:"timestamp"`
+	Payload            string `json:"payload"`
+	PayloadHex         string `json:"payload_hex"`
+	SourceIP           string `json:"source_ip"`
+	SourcePort         uint16 `json:"source_port"`
+	DestinationIP      string `json:"destination_ip"`
+	DestinationPort    uint16 `json:"destination_port"`
+	SessionID          string `json:"session_id"`
+	IsTLS              bool   `json:"is_tls"`
+	TLSALPN            string `json:"tls_alpn,omitempty"`
+	TLSServerName      string `json:"tls_server_name,omitempty"`
+	TLSVersion         string `json:"tls_version,omitempty"`
+	TLSCipherSuite     string `json:"tls_cipher_suite,omitempty"`
+	TLSClientSubject   string `json:"tls_client_subject,omitempty"`
+	TLSClientIssuer    string `json:"tls_client_issuer,omitempty"`
+	TLSClientNotBefore int64  `json:"tls_client_not_before,omitempty"`
+	TLSClientNotAfter  int64  `json:"tls_client_not_after,omitempty"`
 }
 
 // Logger defines the interface for logging operations
@@ -62,16 +62,19 @@ type Logger interface {
 	Error(target, message string)
 }
 
-// FileLogger handles JSON-formatted logging to a file or other io.Writer
 type FileLogger struct {
-	output io.Writer
+	output  io.Writer
+	ecsChan chan<- map[string]interface{}
 }
 
 var httpReqLineRe = regexp.MustCompile(`^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)\s+HTTP/1\.[01]$`)
 
-// NewLogger creates a new logger instance
 func NewLogger(output io.Writer) Logger {
 	return &FileLogger{output: output}
+}
+
+func NewLoggerWithECSChannel(output io.Writer, ecsChan chan<- map[string]interface{}) Logger {
+	return &FileLogger{output: output, ecsChan: ecsChan}
 }
 
 // Log writes a log message in JSON format
@@ -291,7 +294,6 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 		}
 	}
 
-	// Mark ingestion source so downstream consumers know this record came from Spip
 	if ev, ok := ecs["event"].(map[string]interface{}); ok {
 		ev["ingested_by"] = "spip"
 		ecs["event"] = ev
@@ -299,7 +301,27 @@ func (l *FileLogger) LogConnection(data *ConnectionData) error {
 		ecs["event"] = map[string]interface{}{"id": data.SessionID, "ingested_by": "spip"}
 	}
 
+	if l.ecsChan != nil {
+		copied := copyMap(ecs)
+		select {
+		case l.ecsChan <- copied:
+		default:
+		}
+	}
+
 	return l.writeJSON(ecs)
+}
+
+func copyMap(m map[string]interface{}) map[string]interface{} {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	var out map[string]interface{}
+	if json.Unmarshal(data, &out) != nil {
+		return nil
+	}
+	return out
 }
 
 // writeJSON writes any value as JSON to the output
