@@ -3,27 +3,36 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
 
-// Config represents the application configuration
+type LoomConfig struct {
+	Enabled             bool   `toml:"enabled"`
+	URL                 string `toml:"url"`
+	SensorID            string `toml:"sensor_id"`
+	Token               string `toml:"token"`
+	BatchSize           int    `toml:"batch_size"`
+	FlushInterval       string `toml:"flush_interval"`
+	InsecureSkipVerify  bool   `toml:"insecure_skip_verify"`
+	flushIntervalParsed  time.Duration
+}
+
 type Config struct {
-	// Name identifies this agent instance (used in logs to distinguish hosts)
 	Name     string `toml:"name"`
 	IP       string `toml:"ip"`
 	Port     uint16 `toml:"port"`
 	CertPath string `toml:"cert_path,omitempty"`
 	KeyPath  string `toml:"key_path,omitempty"`
 	LogFile  string `toml:"log_file,omitempty"`
-	// Runtime tuning
 	ReadTimeoutSeconds  int `toml:"read_timeout_seconds,omitempty"`
 	WriteTimeoutSeconds int `toml:"write_timeout_seconds,omitempty"`
 	RateLimitPerSecond  int `toml:"rate_limit_per_second,omitempty"`
 	RateLimitBurst      int `toml:"rate_limit_burst,omitempty"`
+	Loom     LoomConfig `toml:"loom,omitempty"`
 }
 
-// LoadConfig reads and parses the TOML configuration file
 func LoadConfig(path string) (*Config, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -43,7 +52,8 @@ func (c *Config) IsTLSEnabled() bool {
 	return c.CertPath != "" && c.KeyPath != ""
 }
 
-// Validate checks if the configuration is valid
+func (l *LoomConfig) FlushIntervalDuration() time.Duration { return l.flushIntervalParsed }
+
 func (c *Config) Validate() error {
 	if c.Name == "" {
 		return fmt.Errorf("name is required in configuration")
@@ -56,6 +66,29 @@ func (c *Config) Validate() error {
 	}
 	if (c.CertPath != "" && c.KeyPath == "") || (c.CertPath == "" && c.KeyPath != "") {
 		return fmt.Errorf("both cert_path and key_path must be provided for TLS")
+	}
+	if c.Loom.Enabled {
+		if c.Loom.URL == "" {
+			return fmt.Errorf("loom.url is required when loom.enabled is true")
+		}
+		if c.Loom.SensorID == "" {
+			return fmt.Errorf("loom.sensor_id is required when loom.enabled is true")
+		}
+		if c.Loom.Token == "" {
+			return fmt.Errorf("loom.token is required when loom.enabled is true")
+		}
+		if c.Loom.BatchSize <= 0 {
+			c.Loom.BatchSize = 50
+		}
+		d := c.Loom.FlushInterval
+		if d == "" {
+			d = "10s"
+		}
+		parsed, err := time.ParseDuration(d)
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("loom.flush_interval must be a positive duration (e.g. 10s)")
+		}
+		c.Loom.flushIntervalParsed = parsed
 	}
 	return nil
 }

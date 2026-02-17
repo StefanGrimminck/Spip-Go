@@ -35,9 +35,10 @@ port = 8080
 
 Optional configuration keys:
 - `cert_path` / `key_path` — enable TLS if both set
-- `log_file` — write logs to a file instead of stdout
+- **Log output:** `log_file` (local) and/or `[loom]` (remote). See [Log output](#log-output) below.
 - `read_timeout_seconds` / `write_timeout_seconds` — connection timeouts
 - `rate_limit_per_second` / `rate_limit_burst` — connection rate-limiting
+
 If these runtime tuning fields are omitted or set to `0`, Spip applies the following defaults:
 - `read_timeout_seconds`: 30
 - `write_timeout_seconds`: 10
@@ -54,6 +55,20 @@ sudo iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 8080
 ```bash
 ./spip-agent -config config.toml
 ```
+
+## Log output
+
+Spip writes ECS logs to a **single local destination** and can **optionally** send the same logs to a Loom server:
+
+| Destination | Config | Behaviour |
+|-------------|--------|-----------|
+| **Local** | `log_file` | **Default:** omit or leave empty → **stdout**. Set to a path → that file. One of the two, always on. |
+| **Loom** | `[loom]` with `enabled = true` | Optional. Same events are batched and POSTed to your Loom ingest URL in addition to local. |
+
+So: local defaults to stdout; override with `log_file` for a file. Optionally add Loom on top. Both use the same ECS format.
+
+- **Local only:** leave `log_file` commented/empty (stdout) or set it to a path.
+- **Local + Loom:** set local as above and add a `[loom]` section with `url`, `sensor_id`, `token` (see [Loom](#loom-optional-log-shipping) below).
 
 ## Log format
 Spip emits each connection as a single JSON object. The output is formatted to be ECS-compatible using only the fields Spip can provide (no ASN/geo enrichment). Typical fields produced include:
@@ -87,11 +102,15 @@ Example (ECS-shaped) record produced by Spip:
 
 Note: the agent only emits fields it can derive from the connection payload and metadata. Downstream systems can enrich these records (geo, ASN, etc.) if desired.
 
+## Loom (optional log shipping)
+
+Part of [log output](#log-output): when `[loom]` has `enabled = true`, the same ECS records are also batched and POSTed to your Loom ingest URL. Required when enabled: `url`, `sensor_id`, `token`. Optional: `batch_size` (default 50), `flush_interval` (e.g. `"10s"`), `insecure_skip_verify` (for self-signed Loom certs). The exporter runs asynchronously and does not block the capture loop; failed POSTs are logged to stderr and the batch is dropped (fail-open).
+
 ## Project Structure
 ```
 .
 ├── cmd/                 # Main application entry point
-├── internal/            # Configuration, logging, network, TLS
+├── internal/            # Configuration, logging, network, TLS, exporters (e.g. Loom)
 ├── pkg/                 # cgo helpers (socket operations)
 ├── test/                # End-to-end test helpers
 └── scripts/             # Utility scripts (including `initial_setup.sh`)
