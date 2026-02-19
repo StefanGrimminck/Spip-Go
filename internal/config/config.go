@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -42,6 +43,15 @@ func LoadConfig(path string) (*Config, error) {
 	var config Config
 	if err := toml.Unmarshal(content, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Resolve relative cert/key paths relative to the config file's directory
+	configDir := filepath.Dir(path)
+	if config.CertPath != "" && !filepath.IsAbs(config.CertPath) {
+		config.CertPath = filepath.Join(configDir, config.CertPath)
+	}
+	if config.KeyPath != "" && !filepath.IsAbs(config.KeyPath) {
+		config.KeyPath = filepath.Join(configDir, config.KeyPath)
 	}
 
 	return &config, nil
