@@ -23,7 +23,7 @@ go build -o spip-agent ./cmd/spip-agent
 ```bash
 sudo ./scripts/initial_setup.sh
 ```
-This helper writes a `config.toml` (it prompts for a short `name` used in logs), can generate self-signed TLS keys, and optionally applies the PREROUTING iptables redirect used in examples below.
+This helper writes a `config.toml` (it prompts for a short `name` used in logs), can generate self-signed TLS keys, optionally configures Loom (URL, sensor_id, token, etc.), and optionally applies the PREROUTING iptables redirect used in examples below.
 
 3) Create or edit `config.toml`
 Minimal `config.toml`:
@@ -34,7 +34,7 @@ port = 8080
 ```
 
 Optional configuration keys:
-- `cert_path` / `key_path` — enable TLS if both set
+- `cert_path` / `key_path` — enable TLS if both set; may be relative to the config file (the setup script writes relative paths so the config works from any working directory)
 - **Log output:** `log_file` (local) and/or `[loom]` (remote). See [Log output](#log-output) below.
 - `read_timeout_seconds` / `write_timeout_seconds` — connection timeouts
 - `rate_limit_per_second` / `rate_limit_burst` — connection rate-limiting
@@ -134,5 +134,5 @@ Run the interactive helper from the repo root (requires root when applying iptab
 ```bash
 sudo ./scripts/initial_setup.sh
 ```
-The script prompts for a short `name` written into `config.toml`, which appears in each connection log as `observer.hostname` / `host.name`.
+The script prompts for: a short `name` (written into `config.toml`, used in logs as `observer.hostname` / `host.name`), listen IP and port, optional self-signed TLS cert generation (paths are written relative to the config so they work from any directory), optional Loom configuration (URL, sensor_id, token, batch_size, flush_interval, TLS verify), log file path, and optional iptables PREROUTING redirect.
 
