@@ -99,6 +99,21 @@ EOF
         echo "rate_limit_burst = ${CFG_BURST}" >> "$cfgpath"
     fi
 
+    if [ "${CFG_LOOM_ENABLED:-0}" = "1" ] && [ -n "${CFG_LOOM_URL:-}" ] && [ -n "${CFG_LOOM_SENSOR_ID:-}" ] && [ -n "${CFG_LOOM_TOKEN:-}" ]; then
+        cat >> "$cfgpath" <<EOF
+
+# Ship logs to central Loom server
+[loom]
+enabled = true
+url = "${CFG_LOOM_URL}"
+sensor_id = "${CFG_LOOM_SENSOR_ID}"
+token = "${CFG_LOOM_TOKEN}"
+batch_size = ${CFG_LOOM_BATCH_SIZE:-50}
+flush_interval = "${CFG_LOOM_FLUSH_INTERVAL:-10s}"
+insecure_skip_verify = ${CFG_LOOM_INSECURE_SKIP_VERIFY:-false}
+EOF
+    fi
+
     echo "Wrote $cfgpath"
 }
 
@@ -151,8 +166,9 @@ generate_keys() {
 
     chmod 640 "$key" || true
     echo "Generated cert: $cert and key: $key"
-    CFG_CERT_PATH="$cert"
-    CFG_KEY_PATH="$key"
+    # Use paths relative to repo root (where config.toml lives) so they work wherever spip is run from
+    CFG_CERT_PATH="certs-$TIMESTAMP/cert.pem"
+    CFG_KEY_PATH="certs-$TIMESTAMP/key.pem"
 }
 
 main() {
@@ -193,6 +209,25 @@ main() {
         CFG_LOG_FILE=$(prompt "Log file path" "/var/log/spip-agent.log")
     fi
 
+    CFG_LOOM_ENABLED=0
+    if confirm "Do you want to enable Loom (ship logs to a central server)?"; then
+        CFG_LOOM_URL=$(prompt "Loom ingest URL" "https://loom.example.com/api/v1/ingest")
+        CFG_LOOM_SENSOR_ID=$(prompt "Loom sensor ID (e.g. agent name)" "$CFG_NAME")
+        CFG_LOOM_TOKEN=$(prompt "Loom API token" "")
+        if [ -z "$CFG_LOOM_TOKEN" ]; then
+            echo "Loom requires an API token. Skipping Loom config; you can add [loom] to config.toml later."
+        else
+            CFG_LOOM_ENABLED=1
+            CFG_LOOM_BATCH_SIZE=$(prompt "Loom batch size" "50")
+            CFG_LOOM_FLUSH_INTERVAL=$(prompt "Loom flush interval (e.g. 10s)" "10s")
+            if confirm "Skip TLS verification for Loom server (insecure)?"; then
+                CFG_LOOM_INSECURE_SKIP_VERIFY=true
+            else
+                CFG_LOOM_INSECURE_SKIP_VERIFY=false
+            fi
+        fi
+    fi
+
     echo_header "Optional runtime tuning"
     if confirm "Set read/write timeouts?"; then
         CFG_READ_TIMEOUT=$(prompt "Read timeout in seconds" "30")
@@ -227,6 +262,9 @@ main() {
     echo "Configuration written to: $REPO_ROOT/config.toml"
     if [ -n "${CFG_CERT_PATH:-}" ]; then
         echo "TLS cert: $CFG_CERT_PATH"; echo "TLS key: $CFG_KEY_PATH"
+    fi
+    if [ "${CFG_LOOM_ENABLED:-0}" = "1" ]; then
+        echo "Loom: enabled (url=$CFG_LOOM_URL, sensor_id=$CFG_LOOM_SENSOR_ID)"
     fi
     echo
     echo "If you want to undo iptables changes, run this script again and choose to restore the backup when prompted, or run:" 
